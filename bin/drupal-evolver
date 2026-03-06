@@ -1,0 +1,21 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+require __DIR__ . '/../vendor/autoload.php';
+
+use Symfony\Component\Console\Application;
+
+$application = new Application('evolver', '0.1.0');
+
+$application->add(new \DrupalEvolver\Command\IndexCommand());
+$application->add(new \DrupalEvolver\Command\DiffCommand());
+$application->add(new \DrupalEvolver\Command\ScanCommand());
+$application->add(new \DrupalEvolver\Command\ApplyCommand());
+$application->add(new \DrupalEvolver\Command\ReportCommand());
+$application->add(new \DrupalEvolver\Command\StatusCommand());
+$application->add(new \DrupalEvolver\Command\QueryCommand());
+$application->add(new \DrupalEvolver\Command\CompareCommand());
+
+$application->run();

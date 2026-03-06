@@ -1,0 +1,8 @@
+vendor/
+build/
+*.db
+*.sqlite
+.data/
+.cache/
+.claude/
+.git/

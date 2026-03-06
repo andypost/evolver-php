@@ -1,0 +1,19 @@
+{
+  "name": "Evolver",
+  "dockerComposeFile": [
+    "../compose.yaml"
+  ],
+  "service": "evolver",
+  "workspaceFolder": "/app",
+  "remoteUser": "evolver",
+  "shutdownAction": "stopCompose",
+  "overrideCommand": false,
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "bmewburn.vscode-intelephense-client",
+        "xdebug.php-debug"
+      ]
+    }
+  }
+}

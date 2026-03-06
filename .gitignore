@@ -1,0 +1,11 @@
+/vendor/
+*.db
+*.sqlite
+/grammars/*.so
+/grammars/*.dylib
+/build/
+.data/
+.cache/
+.claude/
+*.sqlite-shm
+*.sqlite-wal

@@ -1,0 +1,25 @@
+name: evolver
+
+services:
+  evolver:
+    image: andypost/evolver-php
+    build:
+      context: .
+      args:
+        USER_ID: ${LOCAL_UID:-1000}
+        GROUP_ID: ${LOCAL_GID:-1000}
+    working_dir: /app
+    volumes:
+      - .:/app
+      - ./.cache/composer:/home/evolver/.composer/cache
+    environment:
+      EVOLVER_DB: /app/.data/evolver.sqlite
+      EVOLVER_GRAMMAR_PATH: /usr/lib
+    entrypoint: []
+    command:
+      - tail
+      - -f
+      - /dev/null
+    stdin_open: true
+    tty: true
+    init: true

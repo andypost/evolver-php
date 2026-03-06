@@ -1,0 +1,407 @@
+<?php
+
+declare(strict_types=1);
+
+namespace DrupalEvolver\Tests\Unit\Storage;
+
+use DrupalEvolver\Storage\DatabaseApi;
+use PHPUnit\Framework\TestCase;
+
+class DatabaseApiTest extends TestCase
+{
+    private DatabaseApi $api;
+
+    protected function setUp(): void
+    {
+        $this->api = new DatabaseApi(':memory:');
+    }
+
+    public function testLazyRepoLoading(): void
+    {
+        $v1 = $this->api->versions();
+        $v2 = $this->api->versions();
+        $this->assertSame($v1, $v2, 'Repos should be singletons');
+
+        $this->assertSame($this->api->files(), $this->api->files());
+        $this->assertSame($this->api->symbols(), $this->api->symbols());
+        $this->assertSame($this->api->changes(), $this->api->changes());
+        $this->assertSame($this->api->projects(), $this->api->projects());
+        $this->assertSame($this->api->matches(), $this->api->matches());
+    }
+
+    public function testGetPathReturnsMemory(): void
+    {
+        $this->assertSame(':memory:', $this->api->getPath());
+    }
+
+    public function testPrepareCachesStatements(): void
+    {
+        $first = $this->api->prepare('versions.by_tag', 'SELECT * FROM versions WHERE tag = :tag');
+        $second = $this->api->prepare('versions.by_tag', 'SELECT * FROM versions WHERE tag = :tag');
+
+        $this->assertSame($first, $second);
+    }
+
+    public function testFindRemovedSymbols(): void
+    {
+        $fromId = $this->api->versions()->create('10.2.0', 10, 2, 0);
+        $toId = $this->api->versions()->create('10.3.0', 10, 3, 0);
+
+        $oldFileId = $this->api->files()->create($fromId, 'old.php', 'php', 'h1', null, null, 10, 100);
+        $newFileId = $this->api->files()->create($toId, 'new.php', 'php', 'h2', null, null, 10, 100);
+
+        $this->createSymbol([
+            'version_id' => $fromId, 'file_id' => $oldFileId,
+            'language' => 'php', 'symbol_type' => 'function',
+            'fqn' => 'removed_func', 'name' => 'removed_func',
+            'signature_hash' => 'h1',
+        ]);
+
+        $this->createSymbol([
+            'version_id' => $fromId, 'file_id' => $oldFileId,
+            'language' => 'php', 'symbol_type' => 'function',
+            'fqn' => 'kept_func', 'name' => 'kept_func',
+            'signature_hash' => 'h2',
+        ]);
+
+        $this->createSymbol([
+            'version_id' => $toId, 'file_id' => $newFileId,
+            'language' => 'php', 'symbol_type' => 'function',
+            'fqn' => 'kept_func', 'name' => 'kept_func',
+            'signature_hash' => 'h2',
+        ]);
+
+        $removed = iterator_to_array($this->api->findRemovedSymbols($fromId, $toId));
+        $this->assertCount(1, $removed);
+        $this->assertSame('removed_func', $removed[0]['fqn']);
+    }
+
+    public function testFindAddedSymbols(): void
+    {
+        $fromId = $this->api->versions()->create('10.2.0', 10, 2, 0);
+        $toId = $this->api->versions()->create('10.3.0', 10, 3, 0);
+
+        $oldFileId = $this->api->files()->create($fromId, 'old.php', 'php', 'h1', null, null, 10, 100);
+        $newFileId = $this->api->files()->create($toId, 'new.php', 'php', 'h2', null, null, 10, 100);
+
+        $this->createSymbol([
+            'version_id' => $fromId, 'file_id' => $oldFileId,
+            'language' => 'php', 'symbol_type' => 'function',
+            'fqn' => 'existing', 'name' => 'existing',
+            'signature_hash' => 'h1',
+        ]);
+
+        $this->createSymbol([
+            'version_id' => $toId, 'file_id' => $newFileId,
+            'language' => 'php', 'symbol_type' => 'function',
+            'fqn' => 'existing', 'name' => 'existing',
+            'signature_hash' => 'h1',
+        ]);
+
+        $this->createSymbol([
+            'version_id' => $toId, 'file_id' => $newFileId,
+            'language' => 'php', 'symbol_type' => 'function',
+            'fqn' => 'new_func', 'name' => 'new_func',
+            'signature_hash' => 'h3',
+        ]);
+
+        $added = iterator_to_array($this->api->findAddedSymbols($fromId, $toId));
+        $this->assertCount(1, $added);
+        $this->assertSame('new_func', $added[0]['fqn']);
+    }
+
+    public function testFindRemovedSymbolsHandlesLargeRemovedSets(): void
+    {
+        $fromId = $this->api->versions()->create('10.2.0', 10, 2, 0);
+        $toId = $this->api->versions()->create('10.3.0', 10, 3, 0);
+
+        $oldFileId = $this->api->files()->create($fromId, 'old.php', 'php', 'h1', null, null, 10, 100);
+        $newFileId = $this->api->files()->create($toId, 'new.php', 'php', 'h2', null, null, 10, 100);
+
+        for ($i = 0; $i < 1100; $i++) {
+            $this->createSymbol([
+                'version_id' => $fromId,
+                'file_id' => $oldFileId,
+                'language' => 'php',
+                'symbol_type' => 'function',
+                'fqn' => "removed_func_{$i}",
+                'name' => "removed_func_{$i}",
+                'signature_hash' => "old_hash_{$i}",
+            ]);
+        }
+
+        $this->createSymbol([
+            'version_id' => $toId,
+            'file_id' => $newFileId,
+            'language' => 'php',
+            'symbol_type' => 'function',
+            'fqn' => 'kept_func',
+            'name' => 'kept_func',
+            'signature_hash' => 'kept_hash',
+        ]);
+
+        $removed = iterator_to_array($this->api->findRemovedSymbols($fromId, $toId));
+
+        $this->assertCount(1100, $removed);
+        $this->assertContains('removed_func_0', array_column($removed, 'fqn'));
+        $this->assertContains('removed_func_1099', array_column($removed, 'fqn'));
+    }
+
+    public function testFindChangedSignatures(): void
+    {
+        $fromId = $this->api->versions()->create('10.2.0', 10, 2, 0);
+        $toId = $this->api->versions()->create('10.3.0', 10, 3, 0);
+
+        $oldFileId = $this->api->files()->create($fromId, 'old.php', 'php', 'h1', null, null, 10, 100);
+        $newFileId = $this->api->files()->create($toId, 'new.php', 'php', 'h2', null, null, 10, 100);
+
+        $this->createSymbol([
+            'version_id' => $fromId, 'file_id' => $oldFileId,
+            'language' => 'php', 'symbol_type' => 'function',
+            'fqn' => 'changed_func', 'name' => 'changed_func',
+            'signature_hash' => 'old_hash',
+            'signature_json' => '{"params":[{"name":"$a"}],"return_type":null}',
+        ]);
+
+        $this->createSymbol([
+            'version_id' => $toId, 'file_id' => $newFileId,
+            'language' => 'php', 'symbol_type' => 'function',
+            'fqn' => 'changed_func', 'name' => 'changed_func',
+            'signature_hash' => 'new_hash',
+            'signature_json' => '{"params":[{"name":"$a"},{"name":"$b"}],"return_type":null}',
+        ]);
+
+        $changed = iterator_to_array($this->api->findChangedSignatures($fromId, $toId));
+        $this->assertCount(1, $changed);
+        $this->assertSame('changed_func', $changed[0]['old']['fqn']);
+    }
+
+    public function testFindNewlyDeprecated(): void
+    {
+        $fromId = $this->api->versions()->create('10.2.0', 10, 2, 0);
+        $toId = $this->api->versions()->create('10.3.0', 10, 3, 0);
+
+        $oldFileId = $this->api->files()->create($fromId, 'old.php', 'php', 'h1', null, null, 10, 100);
+        $newFileId = $this->api->files()->create($toId, 'new.php', 'php', 'h2', null, null, 10, 100);
+
+        $this->createSymbol([
+            'version_id' => $fromId, 'file_id' => $oldFileId,
+            'language' => 'php', 'symbol_type' => 'function',
+            'fqn' => 'will_deprecate', 'name' => 'will_deprecate',
+            'signature_hash' => 'h1', 'is_deprecated' => 0,
+        ]);
+
+        $this->createSymbol([
+            'version_id' => $toId, 'file_id' => $newFileId,
+            'language' => 'php', 'symbol_type' => 'function',
+            'fqn' => 'will_deprecate', 'name' => 'will_deprecate',
+            'signature_hash' => 'h1', 'is_deprecated' => 1,
+            'deprecation_message' => 'Use something else',
+        ]);
+
+        $deprecated = $this->api->findNewlyDeprecated($fromId, $toId);
+        $this->assertCount(1, $deprecated);
+        $this->assertSame('will_deprecate', $deprecated[0]['fqn']);
+    }
+
+    public function testFindDeprecatedThenRemoved(): void
+    {
+        $fromId = $this->api->versions()->create('10.2.0', 10, 2, 0);
+        $toId = $this->api->versions()->create('10.3.0', 10, 3, 0);
+
+        $oldFileId = $this->api->files()->create($fromId, 'old.php', 'php', 'h1', null, null, 10, 100);
+
+        $this->createSymbol([
+            'version_id' => $fromId, 'file_id' => $oldFileId,
+            'language' => 'php', 'symbol_type' => 'function',
+            'fqn' => 'old_deprecated', 'name' => 'old_deprecated',
+            'signature_hash' => 'h1', 'is_deprecated' => 1,
+            'deprecation_message' => 'Removed in 11.0',
+        ]);
+
+        $removed = $this->api->findDeprecatedThenRemoved($fromId, $toId);
+        $this->assertCount(1, $removed);
+        $this->assertSame('old_deprecated', $removed[0]['fqn']);
+    }
+
+    public function testGetStats(): void
+    {
+        $this->assertGreaterThan(0, $this->api->versions()->create('10.2.0', 10, 2, 0));
+
+        $stats = $this->api->getStats();
+        $this->assertCount(1, $stats['versions']);
+        $this->assertSame(0, $stats['symbol_count']);
+        $this->assertSame(0, $stats['change_count']);
+        $this->assertSame(0, $stats['project_count']);
+        $this->assertSame(0, $stats['match_count']);
+    }
+
+    public function testDeleteChangesForPair(): void
+    {
+        $fromId = $this->api->versions()->create('10.2.0', 10, 2, 0);
+        $toId = $this->api->versions()->create('10.3.0', 10, 3, 0);
+
+        $changeId = $this->api->changes()->create([
+            'from_version_id' => $fromId,
+            'to_version_id' => $toId,
+            'language' => 'php',
+            'change_type' => 'function_removed',
+            'old_fqn' => 'test',
+        ]);
+        $this->assertGreaterThan(0, $changeId);
+
+        $this->assertSame(1, $this->api->changes()->countByVersions($fromId, $toId));
+
+        $this->assertSame(1, $this->api->deleteChangesForPair($fromId, $toId));
+        $this->assertSame(0, $this->api->changes()->countByVersions($fromId, $toId));
+        $this->assertSame(0, $this->api->deleteChangesForPair($fromId, $toId));
+    }
+
+    public function testFindSymbolById(): void
+    {
+        $versionId = $this->api->versions()->create('10.2.0', 10, 2, 0);
+        $fileId = $this->api->files()->create($versionId, 'test.php', 'php', 'h1', null, null, 10, 100);
+
+        $id = $this->api->symbols()->create([
+            'version_id' => $versionId, 'file_id' => $fileId,
+            'language' => 'php', 'symbol_type' => 'function',
+            'fqn' => 'test_func', 'name' => 'test_func',
+            'signature_hash' => 'h1',
+        ]);
+
+        $sym = $this->api->findSymbolById($id);
+        $this->assertNotNull($sym);
+        $this->assertSame('test_func', $sym['fqn']);
+
+        $this->assertNull($this->api->findSymbolById(99999));
+    }
+
+    public function testFindPendingFixesWithTemplates(): void
+    {
+        $fromId = $this->api->versions()->create('10.2.0', 10, 2, 0);
+        $toId = $this->api->versions()->create('10.3.0', 10, 3, 0);
+
+        $changeId = $this->api->changes()->create([
+            'from_version_id' => $fromId,
+            'to_version_id' => $toId,
+            'language' => 'php',
+            'change_type' => 'function_removed',
+            'old_fqn' => 'foo',
+            'fix_template' => '{"type":"function_rename","old":"foo","new":"bar"}',
+        ]);
+
+        $projectId = $this->api->projects()->create('test', '/tmp/test', 'module', '10.2.0');
+
+        $matchId = $this->api->matches()->create([
+            'project_id' => $projectId,
+            'change_id' => $changeId,
+            'file_path' => 'test.php',
+            'line_start' => 1,
+            'matched_source' => 'foo()',
+            'fix_method' => 'template',
+        ]);
+        $this->assertGreaterThan(0, $matchId);
+
+        $fixes = $this->api->findPendingFixesWithTemplates($projectId);
+        $this->assertCount(1, $fixes);
+        $this->assertSame('function_removed', $fixes[0]['change_type']);
+        $this->assertNotNull($fixes[0]['fix_template']);
+    }
+
+    public function testFindMatchesWithChanges(): void
+    {
+        $fromId = $this->api->versions()->create('10.2.0', 10, 2, 0);
+        $toId = $this->api->versions()->create('10.3.0', 10, 3, 0);
+
+        $changeId = $this->api->changes()->create([
+            'from_version_id' => $fromId,
+            'to_version_id' => $toId,
+            'language' => 'php',
+            'change_type' => 'function_removed',
+            'severity' => 'breaking',
+            'old_fqn' => 'foo',
+        ]);
+
+        $projectId = $this->api->projects()->create('test', '/tmp/test', 'module', '10.2.0');
+
+        $matchId = $this->api->matches()->create([
+            'project_id' => $projectId,
+            'change_id' => $changeId,
+            'file_path' => 'test.php',
+            'line_start' => 5,
+            'matched_source' => 'foo()',
+        ]);
+        $this->assertGreaterThan(0, $matchId);
+
+        $matches = $this->api->findMatchesWithChanges($projectId);
+        $this->assertCount(1, $matches);
+        $this->assertSame('function_removed', $matches[0]['change_type']);
+        $this->assertSame('breaking', $matches[0]['severity']);
+    }
+
+    public function testFindParamCountChanges(): void
+    {
+        $fromId = $this->api->versions()->create('10.2.0', 10, 2, 0);
+        $toId = $this->api->versions()->create('10.3.0', 10, 3, 0);
+
+        $oldFileId = $this->api->files()->create($fromId, 'old.php', 'php', 'h1', null, null, 10, 100);
+        $newFileId = $this->api->files()->create($toId, 'new.php', 'php', 'h2', null, null, 10, 100);
+
+        // Function with 1 param -> now has 2 params (increased)
+        $this->createSymbol([
+            'version_id' => $fromId, 'file_id' => $oldFileId,
+            'language' => 'php', 'symbol_type' => 'function',
+            'fqn' => 'gained_param', 'name' => 'gained_param',
+            'signature_hash' => 'old_1',
+            'signature_json' => '{"params":[{"name":"$a"}],"return_type":null}',
+        ]);
+        $this->createSymbol([
+            'version_id' => $toId, 'file_id' => $newFileId,
+            'language' => 'php', 'symbol_type' => 'function',
+            'fqn' => 'gained_param', 'name' => 'gained_param',
+            'signature_hash' => 'new_1',
+            'signature_json' => '{"params":[{"name":"$a"},{"name":"$b"}],"return_type":null}',
+        ]);
+
+        // Function with 2 params -> now has 1 param (decreased)
+        $this->createSymbol([
+            'version_id' => $fromId, 'file_id' => $oldFileId,
+            'language' => 'php', 'symbol_type' => 'function',
+            'fqn' => 'lost_param', 'name' => 'lost_param',
+            'signature_hash' => 'old_2',
+            'signature_json' => '{"params":[{"name":"$a"},{"name":"$b"}],"return_type":null}',
+        ]);
+        $this->createSymbol([
+            'version_id' => $toId, 'file_id' => $newFileId,
+            'language' => 'php', 'symbol_type' => 'function',
+            'fqn' => 'lost_param', 'name' => 'lost_param',
+            'signature_hash' => 'new_2',
+            'signature_json' => '{"params":[{"name":"$a"}],"return_type":null}',
+        ]);
+
+        // All param count changes
+        $allChanges = iterator_to_array($this->api->findParamCountChanges($fromId, $toId));
+        $this->assertCount(2, $allChanges);
+
+        // Only increased params
+        $increased = iterator_to_array($this->api->findParamCountChanges($fromId, $toId, 'increased'));
+        $this->assertCount(1, $increased);
+        $this->assertSame('gained_param', $increased[0]['old']['fqn']);
+        $this->assertSame(1, $increased[0]['old']['param_count']);
+        $this->assertSame(2, $increased[0]['new']['param_count']);
+
+        // Only decreased params
+        $decreased = iterator_to_array($this->api->findParamCountChanges($fromId, $toId, 'decreased'));
+        $this->assertCount(1, $decreased);
+        $this->assertSame('lost_param', $decreased[0]['old']['fqn']);
+        $this->assertSame(2, $decreased[0]['old']['param_count']);
+        $this->assertSame(1, $decreased[0]['new']['param_count']);
+    }
+    private function createSymbol(array $data): int
+    {
+        $id = $this->api->symbols()->create($data);
+        $this->assertGreaterThan(0, $id);
+
+        return $id;
+    }
+}
