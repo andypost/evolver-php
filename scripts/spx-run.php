@@ -4,15 +4,6 @@
 declare(strict_types=1);
 
 require __DIR__ . '/../vendor/autoload.php';
-
-use DrupalEvolver\Command\ApplyCommand;
-use DrupalEvolver\Command\DiffCommand;
-use DrupalEvolver\Command\IndexCommand;
-use DrupalEvolver\Command\QueryCommand;
-use DrupalEvolver\Command\ReportCommand;
-use DrupalEvolver\Command\ScanCommand;
-use DrupalEvolver\Command\StatusCommand;
-use Symfony\Component\Console\Application;
 use Symfony\Component\Console\Input\ArgvInput;
 use Symfony\Component\Console\Output\ConsoleOutput;
 
@@ -52,14 +43,7 @@ set_error_handler(static function (int $severity, string $message) use (&$errors
 $wallStart = hrtime(true);
 $startReturn = spx_profiler_start();
 
-$application = new Application('DrupalEvolver', '0.1.0');
-$application->add(new IndexCommand());
-$application->add(new DiffCommand());
-$application->add(new ScanCommand());
-$application->add(new ApplyCommand());
-$application->add(new ReportCommand());
-$application->add(new StatusCommand());
-$application->add(new QueryCommand());
+$application = \DrupalEvolver\ConsoleApplicationFactory::create();
 $application->setAutoExit(false);
 
 $input = new ArgvInput(array_merge(['bin/evolver'], $commandArgs));

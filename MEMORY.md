@@ -1,6 +1,6 @@
 # Auto Memory — DrupalEvolver
 
-Last updated: 2026-03-06
+Last updated: 2026-03-07
 
 ## Project Type
 
@@ -25,7 +25,8 @@ Docker runs as non-root user with UID/GID matching host to ensure file ownership
 
 - **SQLite WAL mode**: Enabled for concurrency. All repos use parameterized queries.
 
-- **Multi-Process Concurrency**: Uses `pcntl_fork` for parallel indexing and scanning. Workers use shared WAL database with sub-chunked transactions.
+- **Multi-Process Concurrency**: Uses `pcntl_fork` for parallel indexing and scanning. Workers extract payloads, and the parent process performs the SQLite merge to avoid lock-heavy shared writes.
+- **FFI Lifetime**: `FFIBinding` is fork-aware and refreshes automatically on PID change. `Parser` instances are process-local and must be recreated after fork; normal runtime paths no longer call `FFIBinding::reset()`.
 
 - **Memory Management**: Uses PHP Generators (`yield`) for tree traversal and match collection to keep RAM usage low. Aggressive `gc_collect_cycles()` in worker loops.
 

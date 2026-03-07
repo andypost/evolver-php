@@ -31,9 +31,11 @@ RUN set -eux; \
         php85-json \
         php85-ffi \
         php85-pcntl \
+        php85-posix \
         php85-meminfo \
         php85-pecl-memprof \
         php85-pecl-igbinary \
+        php85-pecl-swoole \
         php85-spx \
         php85-pecl-xhprof; \
     ln -sf /usr/bin/php85 /usr/bin/php

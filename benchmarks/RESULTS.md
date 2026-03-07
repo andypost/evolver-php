@@ -65,6 +65,22 @@
 - SQL beats PHP hash-maps because data transfer overhead dominates at 15K rows
 - The diff pipeline bottleneck is rename matching (O(n*m) Levenshtein), not SQL queries
 
+## Indexing Concurrency Models (9,002 files, Drupal Core Modules)
+
+**Hardware:** 8-core CPU
+**Date:** 2026-03-07
+
+| Method | 4 Workers | 8 Workers | Peak RSS | Scaling |
+| :--- | :--- | :--- | :--- | :--- |
+| **pcntl_fork** (Baseline) | **1200 files/s** | **1370 files/s** | **~110 MB** | **Linear** |
+| **AMPHP Parallel** | 1170 files/s | 1272 files/s | ~200 MB | Positive |
+| **Swoole Coroutines** | 526 files/s | CRASH (OOM) | 6.7 GB | Negative |
+
+**Verdict:**
+- **pcntl_fork** is the clear winner for CPU-bound FFI parsing. It leverages all CPU cores and ensures instant memory reclamation by the OS after each chunk.
+- **AMPHP** is a very strong secondary option (93-98% efficiency) with a cleaner API, but higher initial memory overhead.
+- **Swoole** is unsuitable for this workload. Cooperative single-threading creates a CPU bottleneck, and the shared-memory model leads to massive RSS growth when handling thousands of FFI-heavy tasks.
+
 ## Decisions
 
 1. **Keep JSON in SQLite** — human-readable, queryable via json_extract(), fast enough
@@ -72,3 +88,5 @@
 3. **Switch to EXCEPT** in SymbolDiffer — easy 35% win
 4. **Use json_extract() in SQLite** — for filtering and partial field reads
 5. **Skip msgpack** — slower than both json and igbinary in PHP 8.5
+6. **Default to pcntl_fork** — for parallel indexing on CLI.
+7. **Remove Swoole Indexer** — the cooperative model is not a fit for CPU-bound code analysis.

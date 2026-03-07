@@ -4,13 +4,7 @@ declare(strict_types=1);
 
 namespace DrupalEvolver\Tests\Unit\Command;
 
-use DrupalEvolver\Command\ApplyCommand;
-use DrupalEvolver\Command\DiffCommand;
-use DrupalEvolver\Command\IndexCommand;
-use DrupalEvolver\Command\QueryCommand;
-use DrupalEvolver\Command\ReportCommand;
-use DrupalEvolver\Command\ScanCommand;
-use DrupalEvolver\Command\StatusCommand;
+use DrupalEvolver\ConsoleApplicationFactory;
 use PHPUnit\Framework\TestCase;
 use Symfony\Component\Console\Application;
 use Symfony\Component\Console\Tester\CommandTester;
@@ -21,14 +15,7 @@ class CommandRegistrationTest extends TestCase
 
     protected function setUp(): void
     {
-        $this->app = new Application('evolver', '0.1.0');
-        $this->app->add(new IndexCommand());
-        $this->app->add(new DiffCommand());
-        $this->app->add(new ScanCommand());
-        $this->app->add(new ApplyCommand());
-        $this->app->add(new ReportCommand());
-        $this->app->add(new StatusCommand());
-        $this->app->add(new QueryCommand());
+        $this->app = ConsoleApplicationFactory::create();
     }
 
     public function testAllCommandsRegistered(): void
@@ -40,6 +27,7 @@ class CommandRegistrationTest extends TestCase
         $this->assertTrue($this->app->has('report'));
         $this->assertTrue($this->app->has('status'));
         $this->assertTrue($this->app->has('query'));
+        $this->assertTrue($this->app->has('compare'));
     }
 
     public function testStatusCommandRuns(): void

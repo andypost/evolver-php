@@ -12,12 +12,14 @@ class Parser
     private ?FFIBinding $ffi = null;
     private LanguageRegistry $registry;
     private bool $useCli;
+    private int $ownerPid;
 
     public function __construct(
         ?bool $useCli = null,
         ?TreeSitterCLI $cli = null,
         ?LanguageRegistry $registry = null,
     ) {
+        $this->ownerPid = getmypid() ?: 0;
         $this->useCli = $useCli ?? (($_ENV['EVOLVER_USE_CLI'] ?? getenv('EVOLVER_USE_CLI')) === '1');
         $this->cli = $cli ?? new TreeSitterCLI();
         $this->registry = $registry ?? new LanguageRegistry();
@@ -35,6 +37,8 @@ class Parser
         if ($this->useCli) {
             return $this->parseWithCli($source, $language);
         }
+
+        $this->assertCurrentProcess();
 
         return $this->parseWithFFI($source, $language);
     }
@@ -79,12 +83,32 @@ class Parser
 
     public function binding(): ?FFIBinding
     {
+        if (!$this->useCli) {
+            $this->assertCurrentProcess();
+        }
+
         return $this->ffi;
     }
 
     public function registry(): LanguageRegistry
     {
+        if (!$this->useCli) {
+            $this->assertCurrentProcess();
+        }
+
         return $this->registry;
+    }
+
+    private function assertCurrentProcess(): void
+    {
+        $currentPid = getmypid() ?: 0;
+        if ($currentPid !== $this->ownerPid) {
+            throw new RuntimeException(sprintf(
+                'Parser instances are process-local. Create a new Parser after forking instead of reusing one from PID %d in PID %d.',
+                $this->ownerPid,
+                $currentPid,
+            ));
+        }
     }
 
     private function resolveCoreLibraryPath(string $grammarPath): string

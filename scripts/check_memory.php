@@ -5,11 +5,7 @@ declare(strict_types=1);
 require __DIR__ . '/../vendor/autoload.php';
 
 use DrupalEvolver\Indexer\CoreIndexer;
-use DrupalEvolver\Storage\Database;
-use DrupalEvolver\Storage\Repository\FileRepo;
-use DrupalEvolver\Storage\Repository\SymbolRepo;
-use DrupalEvolver\Storage\Repository\VersionRepo;
-use DrupalEvolver\Storage\Schema;
+use DrupalEvolver\Storage\DatabaseApi;
 use DrupalEvolver\TreeSitter\Parser;
 
 if (!extension_loaded('meminfo')) {
@@ -20,13 +16,8 @@ if (!extension_loaded('meminfo')) {
 $parser = new Parser();
 $dbPath = '/app/.data/profiles/leak_test.sqlite';
 if (file_exists($dbPath)) unlink($dbPath);
-$db = new Database($dbPath);
-(new Schema($db))->createAll();
-
-$versionRepo = new VersionRepo($db);
-$fileRepo = new FileRepo($db);
-$symbolRepo = new SymbolRepo($db);
-$indexer = new CoreIndexer($parser, $db, $versionRepo, $fileRepo, $symbolRepo);
+$api = new DatabaseApi($dbPath);
+$indexer = new CoreIndexer($parser, $api);
 $indexer->setWorkerCount(4);
 
 $path = '/drupal/core/lib/Drupal/Core';

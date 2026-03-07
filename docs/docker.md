@@ -159,6 +159,17 @@ Check installed libs:
 make e -- ls -la /usr/lib/libtree-sitter.so* /usr/lib/libtree-sitter-php.so /usr/lib/libtree-sitter-yaml.so
 ```
 
+### Swoole `io_uring` permission error
+
+If Swoole prints `Iouring::Iouring(): Failed to initialize io_uring instance, Error: Operation not permitted[1]`, the container is still running under Docker's built-in seccomp profile.
+
+Recreate the service so the repo-local seccomp profile from `compose.yaml` is applied:
+
+```bash
+docker compose up -d --force-recreate evolver
+docker compose exec -T evolver php85 -r 'Swoole\Coroutine\run(function(){ echo strlen(file_get_contents("/etc/hosts")) . "\n"; });'
+```
+
 ### Permission issues on generated files
 
 Ensure `.env` contains matching UID/GID and rebuild:

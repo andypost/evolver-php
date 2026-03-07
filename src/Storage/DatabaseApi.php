@@ -390,6 +390,7 @@ class DatabaseApi
     {
         return [
             'versions' => $this->database->query('SELECT * FROM versions ORDER BY weight, id')->fetchAll(),
+            'file_count' => (int) $this->database->query('SELECT COUNT(*) as cnt FROM parsed_files')->fetch()['cnt'],
             'symbol_count' => (int) $this->database->query('SELECT COUNT(*) as cnt FROM symbols')->fetch()['cnt'],
             'change_count' => (int) $this->database->query('SELECT COUNT(*) as cnt FROM changes')->fetch()['cnt'],
             'project_count' => (int) $this->database->query('SELECT COUNT(*) as cnt FROM projects')->fetch()['cnt'],

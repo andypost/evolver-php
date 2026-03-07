@@ -93,9 +93,13 @@ class ProjectScanner
         }
 
         $files = $this->collectFiles($path);
-        $output?->writeln(sprintf('Scanning <info>%d</info> files using <info>%d</info> workers', count($files), $this->workerCount));
+        $effectiveWorkerCount = $this->effectiveWorkerCount();
+        if ($this->workerCount > 1 && $effectiveWorkerCount === 1) {
+            $output?->writeln('<comment>pcntl is unavailable; falling back to sequential scanning.</comment>');
+        }
+        $output?->writeln(sprintf('Scanning <info>%d</info> files using <info>%d</info> worker%s', count($files), $effectiveWorkerCount, $effectiveWorkerCount === 1 ? '' : 's'));
 
-        if ($this->workerCount > 1 && function_exists('pcntl_fork')) {
+        if ($this->canRunParallel()) {
             $this->scanParallel($files, $changesByLanguage, $projectId, $output);
         } else {
             $this->scanSequential($files, $changesByLanguage, $projectId, $output);
@@ -157,8 +161,6 @@ class ProjectScanner
             }
 
             if ($pid === 0) {
-                \DrupalEvolver\TreeSitter\FFIBinding::reset();
-
                 // Child: Private DB
                 $db = new Database($workerDbPath);
                 (new Schema($db))->createAll();
@@ -336,5 +338,15 @@ class ProjectScanner
             return count($matches[0]);
         }
         return 4;
+    }
+
+    private function canRunParallel(): bool
+    {
+        return $this->workerCount > 1 && function_exists('pcntl_fork');
+    }
+
+    private function effectiveWorkerCount(): int
+    {
+        return $this->canRunParallel() ? $this->workerCount : 1;
     }
 }

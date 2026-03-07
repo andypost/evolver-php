@@ -4,14 +4,7 @@ declare(strict_types=1);
 
 namespace DrupalEvolver\Indexer;
 
-use DrupalEvolver\Indexer\Extractor\PHPExtractor;
-use DrupalEvolver\Indexer\Extractor\YAMLExtractor;
-use DrupalEvolver\Indexer\Extractor\JSExtractor;
-use DrupalEvolver\Indexer\Extractor\CSSExtractor;
-use DrupalEvolver\Indexer\Extractor\DrupalLibrariesExtractor;
-use DrupalEvolver\Storage\Database;
 use DrupalEvolver\Storage\DatabaseApi;
-use DrupalEvolver\Storage\Repository\FileRepo;
 use DrupalEvolver\Storage\Repository\SymbolRepo;
 use DrupalEvolver\TreeSitter\Parser;
 use Symfony\Component\Console\Helper\ProgressBar;
@@ -19,6 +12,10 @@ use Symfony\Component\Console\Output\OutputInterface;
 
 class CoreIndexer
 {
+    private const MERGE_DELETE_CHUNK_SIZE = 100;
+    private const MERGE_INSERT_CHUNK_SIZE = 100;
+    private const FILE_ID_LOOKUP_CHUNK_SIZE = 200;
+
     private FileClassifier $classifier;
     private bool $storeAst = true;
     private int $workerCount = 1;
@@ -59,13 +56,17 @@ class CoreIndexer
 
         $files = $this->collectFiles($path);
         $totalFiles = count($files);
-        $output?->writeln(sprintf('Found <info>%d</info> files to index using <info>%d</info> workers', $totalFiles, $this->workerCount));
+        $effectiveWorkerCount = $this->effectiveWorkerCount();
+        if ($this->workerCount > 1 && $effectiveWorkerCount === 1) {
+            $output?->writeln('<comment>pcntl is unavailable; falling back to sequential indexing.</comment>');
+        }
+        $output?->writeln(sprintf('Found <info>%d</info> files to index using <info>%d</info> worker%s', $totalFiles, $effectiveWorkerCount, $effectiveWorkerCount === 1 ? '' : 's'));
 
         if ($totalFiles === 0) {
             return;
         }
 
-        if ($this->workerCount > 1 && function_exists('pcntl_fork')) {
+        if ($this->canRunParallel()) {
             $this->indexParallel($path, $versionId, $files, $output);
         } else {
             $this->indexSequential($path, $versionId, $files, $output);
@@ -80,31 +81,16 @@ class CoreIndexer
     private function indexSequential(string $path, int $versionId, array $files, ?OutputInterface $output): void
     {
         $progress = $this->createProgressBar($output, count($files));
-
-        $phpExtractor = new PHPExtractor($this->parser->registry());
-        $yamlExtractor = new YAMLExtractor($this->parser->registry());
-        $jsExtractor = new JSExtractor($this->parser->registry());
-        $cssExtractor = new CSSExtractor($this->parser->registry());
-        $libExtractor = new DrupalLibrariesExtractor($this->parser->registry());
-
-        $fileRepo = $this->api->files();
-        $symbolRepo = $this->api->symbols();
-
-        $processedFiles = $this->api->db()->transaction(function() use ($path, $versionId, $files, $progress, $phpExtractor, $yamlExtractor, $jsExtractor, $cssExtractor, $libExtractor, $fileRepo, $symbolRepo): int {
-            $processedFiles = 0;
-
-            foreach ($files as $filePath) {
-                $this->indexFileWorker($path, $versionId, $filePath, $this->parser, $fileRepo, $symbolRepo, $phpExtractor, $yamlExtractor, $jsExtractor, $cssExtractor, $libExtractor);
+        $existingFileHashes = $this->loadExistingFileHashes($versionId);
+        $payload = $this->buildLocalPayload(
+            $path,
+            $files,
+            $existingFileHashes,
+            static function () use ($progress): void {
                 $progress?->advance();
-                $processedFiles++;
             }
-
-            return $processedFiles;
-        });
-
-        if ($processedFiles !== count($files)) {
-            throw new \RuntimeException('Sequential indexing did not process the expected number of files.');
-        }
+        );
+        $this->persistWorkerPayloads($versionId, [$payload]);
 
         $progress?->finish();
     }
@@ -112,14 +98,13 @@ class CoreIndexer
     private function indexParallel(string $path, int $versionId, array $files, ?OutputInterface $output): void
     {
         $chunks = array_chunk($files, (int) ceil(count($files) / $this->workerCount));
+        $existingFileHashes = $this->loadExistingFileHashes($versionId);
         $pids = [];
+        $payloadFiles = $this->allocatePayloadFiles(count($chunks));
 
         $output?->writeln('<info>Spawning workers...</info>');
 
         foreach ($chunks as $i => $chunk) {
-            // Small delay to prevent mass concurrent I/O at start
-            usleep(10000);
-
             $pid = pcntl_fork();
 
             if ($pid === -1) {
@@ -127,138 +112,168 @@ class CoreIndexer
             }
 
             if ($pid === 0) {
-                // Get path before unsetting parent objects
-                $dbPath = $this->api->getPath();
-
-                // Free parent objects in child
-                unset($this->parser, $this->api);
-
-                // Reset FFI singleton in child
-                \DrupalEvolver\TreeSitter\FFIBinding::reset();
-
-                // Child process: New shared DB connection (WAL) and Parser
-                $db = new Database($dbPath);
-                $parser = new Parser();
-                $fileRepo = new FileRepo($db);
-                $symbolRepo = new SymbolRepo($db);
-
-                $phpExtractor = new PHPExtractor($parser->registry());
-                $yamlExtractor = new YAMLExtractor($parser->registry());
-                $jsExtractor = new JSExtractor($parser->registry());
-                $cssExtractor = new CSSExtractor($parser->registry());
-                $libExtractor = new DrupalLibrariesExtractor($parser->registry());
-
-                // Process in smaller sub-chunks to reduce lock time
-                $subChunks = array_chunk($chunk, 20);
-                foreach ($subChunks as $subChunk) {
-                    $processedSubChunk = $db->transaction(function() use ($path, $versionId, $subChunk, $parser, $fileRepo, $symbolRepo, $phpExtractor, $yamlExtractor, $jsExtractor, $cssExtractor, $libExtractor): int {
-                        $processedFiles = 0;
-
-                        foreach ($subChunk as $filePath) {
-                            $this->indexFileWorker($path, $versionId, $filePath, $parser, $fileRepo, $symbolRepo, $phpExtractor, $yamlExtractor, $jsExtractor, $cssExtractor, $libExtractor);
-                            $processedFiles++;
-                        }
-
-                        // Check memory and dump if high
-                        if (memory_get_usage(true) > 200 * 1024 * 1024 && extension_loaded('meminfo')) {
-                            $dumpFile = fopen('/app/.data/profiles/worker_high_mem.json', 'w');
-                            meminfo_dump($dumpFile);
-                            fclose($dumpFile);
-                        }
-
-                        return $processedFiles;
-                    });
-
-                    if ($processedSubChunk !== count($subChunk)) {
-                        throw new \RuntimeException('Parallel indexing worker did not process the expected number of files.');
+                try {
+                    $payload = $this->buildWorkerPayload($path, $chunk, $existingFileHashes);
+                    $written = file_put_contents($payloadFiles[$i], \igbinary_serialize($payload));
+                    if ($written === false) {
+                        throw new \RuntimeException("Worker {$i} could not write payload.");
                     }
-                    gc_collect_cycles();
+                    exit(0);
+                } catch (\Throwable $e) {
+                    file_put_contents('/app/.data/profiles/indexing_errors.log', "Worker {$i} failed: " . $e->getMessage() . "\n", FILE_APPEND);
+                    exit(1);
                 }
-
-                unset($parser, $db, $phpExtractor, $yamlExtractor);
-                gc_collect_cycles();
-                $peak = memory_get_peak_usage(true);
-                file_put_contents('/app/.data/profiles/worker_mem.log', "Worker peak mem: $peak bytes\n", FILE_APPEND);
-                exit(0);
             } else {
-                $pids[] = $pid;
+                $pids[$pid] = $i;
             }
         }
 
-        foreach ($pids as $pid) {
+        foreach (array_keys($pids) as $pid) {
             pcntl_waitpid($pid, $status);
+            if (!pcntl_wifexited($status) || pcntl_wexitstatus($status) !== 0) {
+                $workerIndex = $pids[$pid];
+                $this->cleanupPayloadFiles($payloadFiles);
+                throw new \RuntimeException("Parallel indexing worker {$workerIndex} failed.");
+            }
+        }
+
+        $output?->write('<info>Merging worker payloads...</info> ');
+        try {
+            $this->persistWorkerPayloads($versionId, $this->readPayloadFiles($payloadFiles));
+            $output?->writeln('<info>Done!</info>');
+        } finally {
+            $this->cleanupPayloadFiles($payloadFiles);
         }
     }
 
-    private function indexFileWorker(
+    private function buildWorkerPayload(string $path, array $files, array $existingFileHashes): array
+    {
+        return WorkerPayloadBuilder::buildWithFreshParser(
+            $path,
+            $files,
+            $existingFileHashes,
+            $this->storeAst,
+        );
+    }
+
+    private function buildLocalPayload(
         string $path,
-        int $versionId,
-        string $filePath,
-        Parser $parser,
-        FileRepo $fileRepo,
-        SymbolRepo $symbolRepo,
-        PHPExtractor $phpExtractor,
-        YAMLExtractor $yamlExtractor,
-        JSExtractor $jsExtractor,
-        CSSExtractor $cssExtractor,
-        DrupalLibrariesExtractor $libExtractor
-    ): void {
-        $relativePath = substr($filePath, strlen($path) + 1);
-        $language = $this->classifier->classify($filePath);
-        if (!$language) return;
+        array $files,
+        array $existingFileHashes,
+        ?callable $onProcessed = null
+    ): array {
+        return WorkerPayloadBuilder::buildWithParser(
+            $path,
+            $files,
+            $existingFileHashes,
+            $this->storeAst,
+            $this->parser,
+            $onProcessed,
+        );
+    }
 
-        $content = file_get_contents($filePath);
-        if ($content === false) return;
+    private function persistWorkerPayloads(int $versionId, iterable $payloads): void
+    {
+        $db = $this->api->db();
+        $symbolRepo = $this->api->symbols();
 
-        $fileHash = hash('sha256', $content);
-        $existingFile = $fileRepo->findByPath($versionId, $relativePath);
-        if ($existingFile !== null && ($existingFile['file_hash'] ?? null) === $fileHash) {
-            return;
-        }
-
-        try {
-            $tree = $parser->parse($content, $language);
-            $root = $tree->rootNode();
-
-            $extractor = match($language) {
-                'php' => $phpExtractor,
-                'yaml' => $yamlExtractor,
-                'javascript' => $jsExtractor,
-                'css' => $cssExtractor,
-                'drupal_libraries' => $libExtractor,
-                default => null,
-            };
-
-            if (!$extractor) return;
-
-            $symbols = $extractor->extract($root, $content, $relativePath);
-            $compressedSexp = $this->storeAst ? gzcompress($root->sexp()) : null;
-            $fileId = $fileRepo->save(
-                $versionId,
-                $relativePath,
-                $language,
-                $fileHash,
-                $compressedSexp,
-                null,
-                substr_count($content, "\n") + 1,
-                strlen($content)
+        $_tx = $db->transaction(function () use ($payloads, $versionId, $db, $symbolRepo): int {
+            $fileUpsert = $db->pdo()->prepare(
+                'INSERT INTO parsed_files (version_id, file_path, language, file_hash, ast_sexp, ast_json, line_count, byte_size)
+                 VALUES (:vid, :path, :lang, :hash, :sexp, :json, :lines, :bytes)
+                 ON CONFLICT(version_id, file_path) DO UPDATE SET
+                     language = excluded.language,
+                     file_hash = excluded.file_hash,
+                     ast_sexp = excluded.ast_sexp,
+                     ast_json = excluded.ast_json,
+                     line_count = excluded.line_count,
+                     byte_size = excluded.byte_size,
+                     parsed_at = datetime(\'now\')'
             );
 
-            foreach ($symbols as &$symbolData) {
-                $symbolData['version_id'] = $versionId;
-                $symbolData['file_id'] = $fileId;
-            }
-            unset($symbolData);
+            $persistedEntries = 0;
 
-            $insertedSymbols = $symbolRepo->replaceForFile($fileId, $symbols);
-            if ($insertedSymbols !== count($symbols)) {
-                throw new \RuntimeException(sprintf('Failed to persist all symbols for "%s".', $relativePath));
+            foreach ($payloads as $payload) {
+                $entries = $payload['entries'] ?? [];
+                if (!is_array($entries) || $entries === []) {
+                    continue;
+                }
+
+                $filePaths = [];
+                $symbolsByPath = [];
+
+                foreach ($entries as $entry) {
+                    $fileData = $entry['file'] ?? null;
+                    $symbols = $entry['symbols'] ?? null;
+                    if (!is_array($fileData) || !is_array($symbols)) {
+                        throw new \RuntimeException('Invalid worker payload entry.');
+                    }
+
+                    $path = (string) ($fileData['file_path'] ?? '');
+                    if ($path === '') {
+                        throw new \RuntimeException('Worker payload entry missing file path.');
+                    }
+
+                    $fileUpsert->execute([
+                        'vid' => $versionId,
+                        'path' => $path,
+                        'lang' => (string) $fileData['language'],
+                        'hash' => (string) $fileData['file_hash'],
+                        'sexp' => $fileData['ast_sexp'] ?? null,
+                        'json' => $fileData['ast_json'] ?? null,
+                        'lines' => isset($fileData['line_count']) ? (int) $fileData['line_count'] : null,
+                        'bytes' => isset($fileData['byte_size']) ? (int) $fileData['byte_size'] : null,
+                    ]);
+
+                    $filePaths[] = $path;
+                    $symbolsByPath[$path] = $symbols;
+                }
+
+                $fileIdsByPath = $this->loadFileIdsForPaths($versionId, $filePaths);
+                if (count($fileIdsByPath) !== count(array_unique($filePaths))) {
+                    throw new \RuntimeException('Failed to resolve all persisted file IDs after payload merge.');
+                }
+
+                $fileIds = array_values($fileIdsByPath);
+                $deletedSymbols = 0;
+                foreach (array_chunk($fileIds, self::MERGE_DELETE_CHUNK_SIZE) as $fileIdChunk) {
+                    $placeholders = implode(', ', array_fill(0, count($fileIdChunk), '?'));
+                    $deletedSymbols += $db->execute("DELETE FROM symbols WHERE file_id IN ({$placeholders})", $fileIdChunk);
+                }
+
+                $symbolRows = [];
+                foreach ($symbolsByPath as $path => $symbols) {
+                    $fileId = $fileIdsByPath[$path] ?? null;
+                    if (!is_int($fileId) || $fileId <= 0) {
+                        throw new \RuntimeException(sprintf('Failed to resolve file ID for "%s".', $path));
+                    }
+
+                    foreach ($symbols as $symbolData) {
+                        $symbolData['version_id'] = $versionId;
+                        $symbolData['file_id'] = $fileId;
+                        $symbolRows[] = $symbolData;
+                    }
+                }
+
+                $insertedSymbols = 0;
+                foreach (array_chunk($symbolRows, self::MERGE_INSERT_CHUNK_SIZE) as $symbolChunk) {
+                    $insertedSymbols += $symbolRepo->insertBatch($symbolChunk);
+                }
+
+                if ($insertedSymbols !== count($symbolRows)) {
+                    throw new \RuntimeException('Failed to persist all merged symbols.');
+                }
+
+                if ($deletedSymbols < 0) {
+                    throw new \RuntimeException('Failed to replace merged symbols.');
+                }
+
+                $persistedEntries += count($entries);
             }
 
-            unset($tree, $root, $symbols, $content);
-        } catch (\Throwable $e) {
-            file_put_contents('/app/.data/profiles/indexing_errors.log', "Error indexing {$filePath}: " . $e->getMessage() . "\n", FILE_APPEND);
-        }
+            return $persistedEntries;
+        });
+        unset($_tx);
     }
 
     private function updateFinalCounts(int $versionId): void
@@ -323,5 +338,105 @@ class CoreIndexer
             return count($matches[0]);
         }
         return 4;
+    }
+
+    private function canRunParallel(): bool
+    {
+        return $this->workerCount > 1 && function_exists('pcntl_fork');
+    }
+
+    private function effectiveWorkerCount(): int
+    {
+        return $this->canRunParallel() ? $this->workerCount : 1;
+    }
+
+    private function allocatePayloadFiles(int $count): array
+    {
+        $payloadFiles = [];
+
+        for ($i = 0; $i < $count; $i++) {
+            $payloadFile = tempnam(sys_get_temp_dir(), "evolver_index_payload_{$i}_");
+            if ($payloadFile === false) {
+                $this->cleanupPayloadFiles($payloadFiles);
+                throw new \RuntimeException("Could not allocate payload file for worker {$i}");
+            }
+
+            $payloadFiles[$i] = $payloadFile;
+        }
+
+        return $payloadFiles;
+    }
+
+    private function loadExistingFileHashes(int $versionId): array
+    {
+        $rows = $this->api->db()->query(
+            'SELECT file_path, file_hash FROM parsed_files WHERE version_id = :vid',
+            ['vid' => $versionId]
+        )->fetchAll();
+
+        $hashes = [];
+        foreach ($rows as $row) {
+            $path = (string) ($row['file_path'] ?? '');
+            if ($path === '') {
+                continue;
+            }
+            $hashes[$path] = (string) ($row['file_hash'] ?? '');
+        }
+
+        return $hashes;
+    }
+
+    private function cleanupPayloadFiles(array $payloadFiles): void
+    {
+        foreach ($payloadFiles as $payloadFile) {
+            if (is_string($payloadFile) && file_exists($payloadFile)) {
+                @unlink($payloadFile);
+            }
+        }
+    }
+
+    private function readPayloadFiles(array $payloadFiles): \Generator
+    {
+        foreach ($payloadFiles as $payloadFile) {
+            $data = file_get_contents($payloadFile);
+            if ($data === false) {
+                throw new \RuntimeException("Could not read worker payload {$payloadFile}.");
+            }
+
+            $payload = \igbinary_unserialize($data);
+            if (!is_array($payload)) {
+                throw new \RuntimeException("Invalid worker payload in {$payloadFile}.");
+            }
+
+            yield $payload;
+        }
+    }
+
+    private function loadFileIdsForPaths(int $versionId, array $filePaths): array
+    {
+        $uniquePaths = array_values(array_unique(array_filter($filePaths, static fn($path): bool => is_string($path) && $path !== '')));
+        if ($uniquePaths === []) {
+            return [];
+        }
+
+        $ids = [];
+        foreach (array_chunk($uniquePaths, self::FILE_ID_LOOKUP_CHUNK_SIZE) as $pathChunk) {
+            $placeholders = implode(', ', array_fill(0, count($pathChunk), '?'));
+            $params = array_merge([$versionId], $pathChunk);
+            $rows = $this->api->db()->query(
+                "SELECT id, file_path FROM parsed_files WHERE version_id = ? AND file_path IN ({$placeholders})",
+                $params
+            )->fetchAll();
+
+            foreach ($rows as $row) {
+                $path = (string) ($row['file_path'] ?? '');
+                if ($path === '') {
+                    continue;
+                }
+                $ids[$path] = (int) ($row['id'] ?? 0);
+            }
+        }
+
+        return $ids;
     }
 }

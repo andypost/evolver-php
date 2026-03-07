@@ -31,8 +31,10 @@ Evolver is optimized for large-scale codebases like Drupal Core (~4,500 files, 3
 ### Multi-Process Parallelism
 Both the **Indexer** and **Scanner** utilize a `pcntl_fork` based worker pool to scale across CPU cores.
 - **Linear Scaling:** Large tasks scale linearly with available CPUs. Indexing 1,900+ files dropped from ~7s to 1.54s with 4 workers.
-- **Worker Isolation:** Each worker process maintains its own Tree-sitter FFI handles and database connections for thread safety.
+- **Worker Isolation:** Each worker process creates its own `Parser` and Tree-sitter state after fork. Inherited parent parser reuse is explicitly rejected.
 - **Configurable Load:** Both `index` and `scan` commands support a `-w|--workers` option, defaulting to 4 workers.
+- **Fallback Behavior:** `pcntl` is not a hard install requirement, but it is the only parallel runtime used in production. Without it, indexing and scanning remain functional and fall back to sequential work.
+- **AMPHP Research:** AMPHP was measured as a potential fallback and rejected because its `amphp/process` worker path depends on `proc_open()` and added enough startup overhead to underperform the sequential no-`pcntl` path on the measured indexing workload.
 
 ### Memory Management
 To handle millions of potential matches without exhausting RAM:
@@ -41,8 +43,8 @@ To handle millions of potential matches without exhausting RAM:
 - **Lightweight Counting:** SQL-level `COUNT(*)` queries are used for progress reporting instead of fetching record sets.
 
 ### Storage Optimization
-- **WAL Mode (Write-Ahead Logging):** SQLite is configured in WAL mode to allow multiple worker processes to write simultaneously without blocking readers.
-- **Sub-chunked Transactions:** Workers process files in chunks of 50 per transaction, balancing commit overhead with database availability for other workers.
+- **WAL Mode (Write-Ahead Logging):** SQLite remains in WAL mode for fast reads and safe merge commits.
+- **Parent-Owned Batched Writes:** Parallel indexing no longer relies on workers writing symbol rows into one shared database. Workers extract payloads and the parent merges them in batches, which avoids the old lock-contention path.
 - **Composite Indexing:** A specialized composite index `idx_sym_lookup(version_id, fqn, symbol_type)` provides a 73% speedup for diffing operations.
 - **Prepared Statement Cache:** `DatabaseApi` reuses prepared statements for the hottest repository paths to reduce parse overhead on repeated writes and diff queries.
 - **Batched Writes:** `MatchRepo` and `ChangeRepo` chunk large inserts so scans and diffs avoid SQLite variable limits.

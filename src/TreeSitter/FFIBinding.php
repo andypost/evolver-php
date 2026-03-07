@@ -7,10 +7,15 @@ namespace DrupalEvolver\TreeSitter;
 class FFIBinding
 {
     private \FFI $ffi;
+    private int $ownerPid;
+    private string $libPath;
     private static ?FFIBinding $instance = null;
 
     private function __construct(string $libPath, ?\FFI $ffi = null)
     {
+        $this->ownerPid = self::currentPid();
+        $this->libPath = $libPath;
+
         if ($ffi !== null) {
             $this->ffi = $ffi;
             return;
@@ -111,18 +116,16 @@ class FFIBinding
 
     public static function create(string $libPath): self
     {
-        if (self::$instance === null) {
-            try {
-                // Try to use preloaded scope first (from ffi.preload)
-                $ffi = \FFI::scope('tree-sitter');
-                self::$instance = new self($libPath, $ffi);
-            } catch (\Throwable) {
-                self::$instance = new self($libPath);
-            }
+        if (self::$instance === null || self::$instance->needsRefresh($libPath)) {
+            self::$instance = self::build($libPath);
         }
+
         return self::$instance;
     }
 
+    /**
+     * Diagnostic escape hatch for explicit rebinding.
+     */
     public static function reset(): void
     {
         self::$instance = null;
@@ -133,8 +136,35 @@ class FFIBinding
         return $this->ffi;
     }
 
+    public function ownerPid(): int
+    {
+        return $this->ownerPid;
+    }
+
     public function __call(string $name, array $arguments): mixed
     {
         return $this->ffi->$name(...$arguments);
+    }
+
+    private static function build(string $libPath): self
+    {
+        try {
+            // Try to use preloaded scope first (from ffi.preload).
+            $ffi = \FFI::scope('tree-sitter');
+            return new self($libPath, $ffi);
+        } catch (\Throwable) {
+            return new self($libPath);
+        }
+    }
+
+    private static function currentPid(): int
+    {
+        return getmypid() ?: 0;
+    }
+
+    private function needsRefresh(string $libPath): bool
+    {
+        return $this->ownerPid !== self::currentPid()
+            || $this->libPath !== $libPath;
     }
 }

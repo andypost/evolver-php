@@ -23,3 +23,9 @@ services:
     stdin_open: true
     tty: true
     init: true
+    # Enable io_uring for Swoole 6.x
+    cap_add:
+      - SYS_ADMIN
+    security_opt:
+      - seccomp=./docker/seccomp/swoole-io_uring.json
+      - systempaths=unconfined

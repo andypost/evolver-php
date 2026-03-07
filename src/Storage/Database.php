@@ -96,7 +96,7 @@ class Database
                     throw $e;
                 }
             } catch (\PDOException $e) {
-                if ($retries < $maxRetries && (str_contains($e->getMessage(), 'database is locked') || $e->getCode() === 'HY000')) {
+                if ($retries < $maxRetries && self::isRetryableSqliteLock($e)) {
                     $retries++;
                     usleep(rand(200000, 1000000)); // 200ms - 1s
                     continue;
@@ -104,5 +104,19 @@ class Database
                 throw $e;
             }
         }
+    }
+
+    public static function isRetryableSqliteLock(\Throwable $e): bool
+    {
+        if (!$e instanceof \PDOException) {
+            return false;
+        }
+
+        $message = strtolower($e->getMessage());
+
+        return str_contains($message, 'database is locked')
+            || str_contains($message, 'database table is locked')
+            || str_contains($message, 'database is busy')
+            || $e->getCode() === 'HY000';
     }
 }

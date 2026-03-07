@@ -45,8 +45,29 @@ Outputs a consolidated summary in `.data/profiles/summary.md`.
 
 Use meminfo in repeated in-process indexing mode:
 ```bash
-make meminfo-leak-index MEMINFO_LEAK_ITERATIONS=30
+docker compose exec -T evolver php85 /app/scripts/meminfo-index-leak.php \
+  /app/.data/profiles/meminfo-leak \
+  /app/src \
+  30 \
+  0 \
+  2
 ```
+
+This probe reports both allocator growth (`memory_usage_real`) and logical PHP heap growth (`memory_usage`) and should be interpreted after warmup, not from the first iteration.
+
+### SPX Profiling
+
+SPX is installed in the image but not enabled by default. Run it on demand:
+```bash
+docker compose exec -T evolver sh -lc '
+  SPX_ENABLED=1 SPX_REPORT=full SPX_AUTO_START=0 \
+  php85 -d extension=/usr/lib/php85/modules/spx.so -d opcache.enable_cli=0 \
+  /app/scripts/spx-run.php /app/.data/profiles/spx/index-src.json \
+  index /app/src --tag 0.0.1 --db /tmp/spx-index.sqlite --no-ast --workers 4
+'
+```
+
+The summary JSON is written to `.data/profiles/spx/`, while full SPX artifacts are written to `spx.data_dir` (currently `/tmp/spx` in the container).
 
 ### Memory Stability Tests
 
@@ -103,4 +124,4 @@ make e -- vendor/bin/phpunit tests/Unit/Integration
 ## Coverage Targets
 
 Current baseline:
-- `122` tests, `1948` assertions
+- `124` tests, `1955` assertions

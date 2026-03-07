@@ -6,11 +6,7 @@ declare(strict_types=1);
 require __DIR__ . '/../vendor/autoload.php';
 
 use DrupalEvolver\Indexer\CoreIndexer;
-use DrupalEvolver\Storage\Database;
-use DrupalEvolver\Storage\Repository\FileRepo;
-use DrupalEvolver\Storage\Repository\SymbolRepo;
-use DrupalEvolver\Storage\Repository\VersionRepo;
-use DrupalEvolver\Storage\Schema;
+use DrupalEvolver\Storage\DatabaseApi;
 use DrupalEvolver\TreeSitter\Parser;
 
 if (!extension_loaded('meminfo')) {
@@ -74,20 +70,15 @@ for ($i = 1; $i <= $iterations; $i++) {
         memory_reset_peak_usage();
     }
 
-    $db = new Database(':memory:');
-    (new Schema($db))->createAll();
-
-    $versionRepo = new VersionRepo($db);
-    $fileRepo = new FileRepo($db);
-    $symbolRepo = new SymbolRepo($db);
-    $indexer = new CoreIndexer($parser, $db, $versionRepo, $fileRepo, $symbolRepo);
+    $api = new DatabaseApi(':memory:');
+    $indexer = new CoreIndexer($parser, $api);
 
     $tag = sprintf('99.9.%d', $i);
     $start = hrtime(true);
     $indexer->index($sourcePath, $tag, null);
     $elapsedMs = round((hrtime(true) - $start) / 1_000_000, 3);
 
-    unset($indexer, $versionRepo, $fileRepo, $symbolRepo, $db);
+    unset($indexer, $api);
 
     $collectedCycles = gc_collect_cycles();
     $iterReportPath = null;
