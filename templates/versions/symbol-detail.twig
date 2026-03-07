@@ -1,0 +1,101 @@
+{% extends "layout.twig" %}
+
+{% block content %}
+    <nav class="breadcrumb">
+        <a href="/versions">Versions</a> &raquo;
+        <a href="/versions/{{ version.id }}">{{ version.tag }}</a> &raquo;
+        <a href="/versions/{{ version.id }}/symbols">Symbols</a> &raquo;
+        <span>{{ symbol.fqn }}</span>
+    </nav>
+
+    <section class="hero hero-compact">
+        <div>
+            <p class="eyebrow">{{ symbol.language|upper }} · {{ version.tag }}</p>
+            <h1>{{ symbol.name }}</h1>
+            <code class="fqn-full">{{ symbol.fqn }}</code>
+        </div>
+        <div class="hero-actions">
+            <span class="badge">{{ symbol.symbol_type }}</span>
+        </div>
+    </section>
+
+    <div class="grid two-up">
+        <section class="panel">
+            <div class="panel-head">
+                <h2>Overview</h2>
+            </div>
+            <ul class="summary-list">
+                <li><span>Type</span><strong>{{ symbol.symbol_type }}</strong></li>
+                <li><span>Language</span><strong>{{ symbol.language }}</strong></li>
+                <li><span>File</span><code class="path">{{ symbol.file_path }}</code></li>
+                <li><span>Lines</span><strong>{{ symbol.line_start }}-{{ symbol.line_end }}</strong></li>
+                {% if symbol.namespace %}
+                    <li><span>Namespace</span><code>{{ symbol.namespace }}</code></li>
+                {% endif %}
+                {% if symbol.parent_symbol %}
+                    <li><span>Parent</span><code>{{ symbol.parent_symbol }}</code></li>
+                {% endif %}
+            </ul>
+        </section>
+
+        <section class="panel">
+            <div class="panel-head">
+                <h2>Semantic Links</h2>
+            </div>
+            {% if semantic_links %}
+                <div class="table-wrapper">
+                    <table class="table">
+                        <thead>
+                        <tr>
+                            <th>Relationship</th>
+                            <th>Symbol</th>
+                            <th>File</th>
+                        </tr>
+                        </thead>
+                        <tbody>
+                        {% for item in semantic_links %}
+                            {% set related = item.symbol %}
+                            <tr>
+                                <td><span class="badge">{{ item.relationship|replace({'_': ' '}) }}</span></td>
+                                <td>
+                                    <div class="fqn-cell">
+                                        <strong><a href="/versions/{{ version.id }}/symbols/{{ related.id }}">{{ related.name }}</a></strong>
+                                        <code class="fqn-full"><a href="/versions/{{ version.id }}/symbols/{{ related.id }}">{{ related.fqn }}</a></code>
+                                    </div>
+                                </td>
+                                <td><code class="path">{{ related.file_path }}</code></td>
+                            </tr>
+                        {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            {% else %}
+                <p class="empty">No semantic links recorded for this symbol yet.</p>
+            {% endif %}
+        </section>
+    </div>
+
+    <div class="grid two-up">
+        <section class="panel">
+            <div class="panel-head">
+                <h2>Signature</h2>
+            </div>
+            {% if signature_pretty %}
+                <pre class="json-block">{{ signature_pretty }}</pre>
+            {% else %}
+                <p class="empty">No signature metadata stored.</p>
+            {% endif %}
+        </section>
+
+        <section class="panel">
+            <div class="panel-head">
+                <h2>Metadata</h2>
+            </div>
+            {% if metadata_pretty %}
+                <pre class="json-block">{{ metadata_pretty }}</pre>
+            {% else %}
+                <p class="empty">No extra metadata stored.</p>
+            {% endif %}
+        </section>
+    </div>
+{% endblock %}

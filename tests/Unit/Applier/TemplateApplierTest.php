@@ -62,7 +62,7 @@ class TemplateApplierTest extends TestCase
         $this->assertGreaterThan(0, $matchId);
 
         $applier = new TemplateApplier($api);
-        $applied = $applier->apply($projectId, $tmpDir, false, false);
+        $applied = $applier->apply($projectId, $tmpDir, null, false, false);
         $this->assertSame(1, $applied);
 
         $updated = file_get_contents($filePath);
@@ -115,7 +115,7 @@ class TemplateApplierTest extends TestCase
         $this->assertGreaterThan(0, $matchId);
 
         $applier = new TemplateApplier($api);
-        $stats = $applier->applyWithStats($projectId, $tmpDir, true, false);
+        $stats = $applier->applyWithStats($projectId, $tmpDir, null, true, false);
 
         $this->assertSame(1, $stats['would_apply']);
         $this->assertSame(0, $stats['applied']);
@@ -199,7 +199,7 @@ class TemplateApplierTest extends TestCase
         $this->assertGreaterThan(0, $stringMatchId);
 
         $applier = new TemplateApplier($api);
-        $stats = $applier->applyWithStats($projectId, $tmpDir, false, false);
+        $stats = $applier->applyWithStats($projectId, $tmpDir, null, false, false);
 
         $this->assertSame(1, $stats['applied']);
         $this->assertSame(1, $stats['failed']);
@@ -255,7 +255,7 @@ class TemplateApplierTest extends TestCase
         $this->assertGreaterThan(0, $matchId);
 
         $applier = new TemplateApplier($api);
-        $stats = $applier->applyWithStats($projectId, $tmpDir, false, false);
+        $stats = $applier->applyWithStats($projectId, $tmpDir, null, false, false);
 
         $this->assertSame(0, $stats['applied']);
         $this->assertSame(1, $stats['skipped']);
@@ -307,7 +307,7 @@ class TemplateApplierTest extends TestCase
         $this->assertGreaterThan(0, $matchId);
 
         $applier = new TemplateApplier($api);
-        $stats = $applier->applyWithStats($projectId, $tmpDir, false, false);
+        $stats = $applier->applyWithStats($projectId, $tmpDir, null, false, false);
 
         $this->assertSame(0, $stats['applied']);
         $this->assertSame(0, $stats['skipped']);
@@ -363,7 +363,7 @@ class TemplateApplierTest extends TestCase
         $this->assertGreaterThan(0, $matchId);
 
         $applier = new TemplateApplier($api);
-        $stats = $applier->applyWithStats($projectId, $tmpDir, false, false);
+        $stats = $applier->applyWithStats($projectId, $tmpDir, null, false, false);
 
         $this->assertSame(0, $stats['applied']);
         $this->assertSame(1, $stats['failed']);

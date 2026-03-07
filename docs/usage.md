@@ -17,9 +17,32 @@ make up
 
 # Verify it works
 make ev -- status
+
+# Optional: start the local dashboard and worker in separate terminals
+make web
+make worker
+# Open http://localhost:8080
 ```
 
 For ad-hoc commands inside the running dev container, use `make e -- ...`. For external mounts, use `make er -- ...` or `make evr -- ...`. For PHPUnit, use `make tests` or `make e -- vendor/bin/phpunit ...`.
+
+## Managed Projects in the Web UI
+
+The local web UI is intended for repeated custom module or site analysis:
+
+```bash
+make web
+make worker
+```
+
+Then open `http://localhost:8080` and:
+- register a Git-backed project
+- save one or more branches
+- queue scans for a specific branch and upgrade target
+- compare two completed scan runs for the same project
+- open a version's symbol browser and click a symbol name to inspect its linked details
+
+The worker performs the blocking Git and scan work. The web UI only handles forms, run history, and SSE status updates.
 
 ## Complete Workflow: Drupal 10 → 11 Upgrade
 
@@ -56,10 +79,13 @@ The engine container mounts this checkout at `/app`. For external projects, use 
 make evr -- scan /mnt/project --target=11.0.0 EXTRA_HOST_PATH=../my-custom-module
 ```
 
+The CLI scan now creates a new `scan_run` and prints its run id. Scan history is preserved instead of replacing prior runs.
+
 ### Step 4: Review Findings
 
 ```bash
 make ev -- report --project=my-custom-module
+make ev -- report --run=1
 ```
 
 ### Step 5: Apply Fixes
@@ -67,6 +93,7 @@ make ev -- report --project=my-custom-module
 **Dry Run (Preview)**
 ```bash
 make ev -- apply --project=my-custom-module --dry-run
+make ev -- apply --run=1 --dry-run
 ```
 
 **Apply all automatically**
@@ -125,6 +152,21 @@ Test tree-sitter S-expression queries directly:
 ```bash
 make ev -- query '(class_declaration name: (name) @cls)' src/Indexer/CoreIndexer.php
 ```
+
+Search semantic YAML data already indexed into SQLite:
+
+```bash
+# Find service ids
+make yaml-search SEARCH_TAG=11.0.0 SEARCH_TYPES=service SEARCH_TERM=block.repository
+
+# Find module/theme info files that mention "block"
+make yaml-search SEARCH_TAG=11.0.0 SEARCH_TYPES=module_info,theme_info SEARCH_TERM=block
+
+# Narrow the JSON output with jq
+make yaml-search SEARCH_TAG=11.0.0 SEARCH_TYPES=module_info SEARCH_TERM=block | jq '.results[] | {fqn, file_path, dependency_targets: .metadata.dependency_targets}'
+```
+
+In the web UI, open `Knowledge Base`, choose a version, then open `Symbols`. Symbol names now link to a detail page. For YAML services, the detail page shows the linked PHP implementation class when Evolver indexed both sides. For PHP classes, the same page shows the reverse `registered service` relationship.
 
 ## Troubleshooting
 

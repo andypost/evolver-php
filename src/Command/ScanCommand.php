@@ -48,12 +48,12 @@ class ScanCommand extends Command
         $matchCollector = new MatchCollector($parser->binding(), $parser->registry());
 
         $scanner = new ProjectScanner($parser, $api, $matchCollector);
-
         if ($workers !== null) {
             $scanner->setWorkerCount((int) $workers);
         }
 
-        $scanner->scan($path, $target, $from, $output);
+        $runId = $scanner->scan($path, $target, $from, $output);
+        $output->writeln(sprintf('Scan run: <info>%d</info>', $runId));
 
         $elapsed = microtime(true) - $startTime;
         $output->writeln(sprintf('Total time: <info>%.2f</info> seconds', $elapsed));

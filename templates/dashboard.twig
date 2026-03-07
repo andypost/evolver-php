@@ -1,0 +1,86 @@
+{% extends "layout.twig" %}
+
+{% block content %}
+    <section class="hero">
+        <div>
+            <p class="eyebrow">Managed Upgrade Analysis</p>
+            <h1>Track branch scans, compare findings, and keep upgrade work visible.</h1>
+        </div>
+        <a class="button button-primary" href="/projects/new">Register a Git project</a>
+    </section>
+
+    <section class="grid two-up">
+        <article class="panel">
+            <div class="panel-head">
+                <h2>Tracked Projects</h2>
+                <span class="count">{{ projects|length }}</span>
+            </div>
+            {% if projects %}
+                <div class="project-list">
+                    {% for project in projects %}
+                        <a class="project-card" href="/projects/{{ project.id }}">
+                            <div class="project-card__head">
+                                <strong>{{ project.name }}</strong>
+                                <span class="pill">{{ project.source_type|replace({'_':' '}) }}</span>
+                            </div>
+                            <div class="muted">{{ project.remote_url ?: project.path }}</div>
+                            <div class="project-card__meta">
+                                <span>Default branch: {{ project.default_branch_record.branch_name ?? project.default_branch ?? 'n/a' }}</span>
+                                <span>Latest run: {{ project.latest_run.status ?? 'none' }}</span>
+                            </div>
+                        </a>
+                    {% endfor %}
+                </div>
+            {% else %}
+                <p class="empty">No managed projects yet.</p>
+            {% endif %}
+        </article>
+
+        <article class="panel">
+            <div class="panel-head">
+                <h2>Active Jobs</h2>
+                <span class="count">{{ active_jobs|length }}</span>
+            </div>
+            {% if active_jobs %}
+                <ul class="job-list">
+                    {% for job in active_jobs %}
+                        <li>
+                            <div class="job-item-basic">
+                                <a href="/jobs"><strong>#{{ job.id }}</strong></a>
+                                <span>{{ job.kind }}</span>
+                                <span class="status-tag status-{{ job.status }}">{{ job.status }}</span>
+                            </div>
+                        </li>
+                    {% endfor %}
+                </ul>
+            {% else %}
+                <p class="empty">No queued or running jobs.</p>
+            {% endif %}
+
+            <div class="panel-head panel-head--spaced">
+                <h2>Recent Jobs</h2>
+                <a href="/jobs" class="meta-link">View all &raquo;</a>
+            </div>
+            {% if recent_jobs %}
+                <ul class="job-list compact">
+                    {% for job in recent_jobs %}
+                        <li>
+                            <div class="job-item-basic">
+                                <span class="muted">#{{ job.id }}</span>
+                                <span>{{ job.kind }}</span>
+                                <span class="status-tag status-{{ job.status }}">{{ job.status }}</span>
+                            </div>
+                        </li>
+                    {% endfor %}
+                </ul>
+            {% else %}
+                <p class="empty">No job history yet.</p>
+            {% endif %}
+        </article>
+    </section>
+
+    <style>
+        .job-item-basic { display: flex; align-items: center; justify-content: space-between; width: 100%; gap: 1rem; }
+        .meta-link { font-size: 0.85rem; color: var(--accent); }
+    </style>
+{% endblock %}

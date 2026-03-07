@@ -35,6 +35,8 @@ class StatusCommand extends Command
         $output->writeln(sprintf('Total symbols:    <info>%d</info>', $stats['symbol_count']));
         $output->writeln(sprintf('Total changes:    <info>%d</info>', $stats['change_count']));
         $output->writeln(sprintf('Projects scanned: <info>%d</info>', $stats['project_count']));
+        $output->writeln(sprintf('Scan runs:        <info>%d</info>', $stats['scan_run_count']));
+        $output->writeln(sprintf('Jobs:             <info>%d</info> (%d active)', $stats['job_count'], $stats['active_job_count']));
         $output->writeln(sprintf('Code matches:     <info>%d</info>', $stats['match_count']));
 
         return Command::SUCCESS;

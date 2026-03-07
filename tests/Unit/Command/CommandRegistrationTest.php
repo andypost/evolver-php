@@ -28,6 +28,9 @@ class CommandRegistrationTest extends TestCase
         $this->assertTrue($this->app->has('status'));
         $this->assertTrue($this->app->has('query'));
         $this->assertTrue($this->app->has('compare'));
+        $this->assertTrue($this->app->has('import'));
+        $this->assertTrue($this->app->has('serve'));
+        $this->assertTrue($this->app->has('queue:work'));
     }
 
     public function testStatusCommandRuns(): void
@@ -87,7 +90,7 @@ class CommandRegistrationTest extends TestCase
         $tester->execute(['--db' => ':memory:']);
 
         $this->assertSame(1, $tester->getStatusCode());
-        $this->assertStringContainsString('--project is required', $tester->getDisplay());
+        $this->assertStringContainsString('Either --project or --run is required', $tester->getDisplay());
     }
 
     public function testReportCommandRequiresProject(): void
@@ -97,6 +100,39 @@ class CommandRegistrationTest extends TestCase
         $tester->execute(['--db' => ':memory:']);
 
         $this->assertSame(1, $tester->getStatusCode());
-        $this->assertStringContainsString('--project is required', $tester->getDisplay());
+        $this->assertStringContainsString('Either --project or --run is required', $tester->getDisplay());
+    }
+
+    public function testImportCommandRequiresPath(): void
+    {
+        $command = $this->app->find('import');
+        $tester = new CommandTester($command);
+        $tester->execute(['--db' => ':memory:']);
+
+        $this->assertSame(1, $tester->getStatusCode());
+    }
+
+    public function testImportCommandWithDmuPath(): void
+    {
+        $dmuPath = __DIR__ . '/../../../drupalmoduleupgrader';
+        if (!is_dir($dmuPath)) {
+            $this->markTestSkipped('DMU not available at ' . $dmuPath);
+        }
+
+        $command = $this->app->find('import');
+        $tester = new CommandTester($command);
+        $tester->execute([
+            '--path' => $dmuPath,
+            '--db' => ':memory:',
+        ]);
+
+        $this->assertSame(0, $tester->getStatusCode());
+        $output = $tester->getDisplay();
+        $this->assertStringContainsString('Importing DMU patterns', $output);
+        $this->assertStringContainsString('grep.yml function_calls:', $output);
+        $this->assertStringContainsString('functions.yml:', $output);
+        $this->assertStringContainsString('hooks.yml:', $output);
+        $this->assertStringContainsString('rewriters.yml:', $output);
+        $this->assertStringContainsString('Done!', $output);
     }
 }

@@ -1,0 +1,105 @@
+{% extends "layout.twig" %}
+
+{% block content %}
+    <section class="hero hero-compact">
+        <div>
+            <p class="eyebrow">Scan Run</p>
+            <h1>#{{ run.id }} for {{ project.name }}</h1>
+            <p class="muted">{{ run.branch_name }} · {{ run.from_core_version ?: 'auto' }} → {{ run.target_core_version }}</p>
+        </div>
+        <a class="button" href="/projects/{{ project.id }}">Back to project</a>
+    </section>
+
+    <section class="grid two-up">
+        <article class="panel">
+            <div class="panel-head">
+                <h2>Status</h2>
+            </div>
+            <div class="status-grid">
+                <div>
+                    <span class="meta-label">Run status</span>
+                    <div><strong data-run-status class="status-tag status-{{ run.status }}">{{ run.status }}</strong></div>
+                </div>
+                <div>
+                    <span class="meta-label">Commit</span>
+                    <strong>{{ run.commit_sha ?: 'pending' }}</strong>
+                </div>
+                <div>
+                    <span class="meta-label">Files</span>
+                    <strong data-job-progress-text>{{ run.scanned_file_count }}/{{ run.file_count }}</strong>
+                </div>
+                <div>
+                    <span class="meta-label">Matches</span>
+                    <strong>{{ run.match_count }}</strong>
+                </div>
+            </div>
+
+            <div class="progress-wrap">
+                <progress data-job-progress value="{{ run.scanned_file_count }}" max="{{ run.file_count > 0 ? run.file_count : 1 }}"></progress>
+                <div class="muted" data-job-label>{{ run.status }}</div>
+            </div>
+
+            {% if run.job_id and run.status in ['queued', 'running'] %}
+                <div data-job-stream="/jobs/{{ run.job_id }}/events"></div>
+            {% endif %}
+        </article>
+
+        <article class="panel">
+            <div class="panel-head">
+                <h2>Summary</h2>
+            </div>
+            <ul class="summary-list">
+                <li><span>Total findings</span><strong>{{ summary.total }}</strong></li>
+                <li><span>Auto-fixable</span><strong>{{ summary.auto_fixable }}</strong></li>
+                {% for severity, count in summary.by_severity %}
+                    <li><span>{{ severity|title }}</span><strong>{{ count }}</strong></li>
+                {% endfor %}
+            </ul>
+        </article>
+    </section>
+
+    <section class="panel">
+        <div class="panel-head">
+            <h2>Job Log</h2>
+        </div>
+        <ul class="log-list" data-job-logs>
+            {% for log in logs %}
+                <li><span class="pill">{{ log.level }}</span><span>{{ log.message }}</span></li>
+            {% else %}
+                <li class="empty">No log entries yet.</li>
+            {% endfor %}
+        </ul>
+    </section>
+
+    <section class="panel">
+        <div class="panel-head">
+            <h2>Matches</h2>
+        </div>
+        {% if matches %}
+            <table class="table">
+                <thead>
+                <tr>
+                    <th>File</th>
+                    <th>Line</th>
+                    <th>Change</th>
+                    <th>Severity</th>
+                    <th>Fix</th>
+                </tr>
+                </thead>
+                <tbody>
+                {% for match in matches %}
+                    <tr>
+                        <td>{{ match.file_path }}</td>
+                        <td>{{ match.line_start }}</td>
+                        <td>{{ match.change_type }}</td>
+                        <td>{{ match.severity }}</td>
+                        <td>{{ match.fix_method ?: 'manual' }}</td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        {% else %}
+            <p class="empty">No matches for this run.</p>
+        {% endif %}
+    </section>
+{% endblock %}

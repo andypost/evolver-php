@@ -1,0 +1,97 @@
+{% extends "layout.twig" %}
+
+{% block content %}
+    <nav class="breadcrumb">
+        <a href="/versions">Versions</a> &raquo; <a href="/versions/{{ version.id }}">{{ version.tag }}</a> &raquo; <span>Symbols</span>
+    </nav>
+
+    <section class="hero hero-compact">
+        <div>
+            <p class="eyebrow">{{ version.tag }}</p>
+            <h1>Browse Symbols</h1>
+        </div>
+    </section>
+
+    <section class="panel">
+        <div class="panel-head">
+            <h2>Filters</h2>
+        </div>
+        <form class="filter-form" method="get">
+            <div class="grid four-up">
+                <label>
+                    <span>Search</span>
+                    <input type="text" name="search" value="{{ search }}" placeholder="FQN or name...">
+                </label>
+                <label>
+                    <span>Type</span>
+                    <select name="type">
+                        <option value="">All Types</option>
+                        {% for type in types %}
+                            <option value="{{ type }}"{% if current_type == type %} selected{% endif %}>{{ type }}</option>
+                        {% endfor %}
+                    </select>
+                </label>
+                <div class="filter-actions">
+                    <button type="submit" class="button button-primary">Apply</button>
+                    <a href="/versions/{{ version.id }}/symbols" class="button">Reset</a>
+                </div>
+            </div>
+        </form>
+    </section>
+
+    <section class="panel">
+        <div class="panel-head">
+            <h2>Symbols</h2>
+            <span class="count">{{ pagination.total_records|number_format }}</span>
+        </div>
+        {% if symbols %}
+            <div class="table-wrapper">
+                <table class="table">
+                    <thead>
+                    <tr>
+                        <th>FQN</th>
+                        <th>Type</th>
+                        <th>File</th>
+                        <th class="text-right">Lines</th>
+                    </tr>
+                    </thead>
+                    <tbody>
+                    {% for symbol in symbols %}
+                        <tr>
+                            <td>
+                                <div class="fqn-cell">
+                                    <strong><a href="/versions/{{ version.id }}/symbols/{{ symbol.id }}">{{ symbol.name }}</a></strong>
+                                    {% if symbol.namespace %}
+                                        <span class="namespace">{{ symbol.namespace }}</span>
+                                    {% endif %}
+                                    <code class="fqn-full"><a href="/versions/{{ version.id }}/symbols/{{ symbol.id }}">{{ symbol.fqn }}</a></code>
+                                </div>
+                            </td>
+                            <td><span class="badge">{{ symbol.symbol_type }}</span></td>
+                            <td><code class="path">{{ symbol.file_path }}</code></td>
+                            <td class="text-right">{{ symbol.line_start }}-{{ symbol.line_end }}</td>
+                        </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+
+            {% if pagination.total > 1 %}
+                <nav class="pagination">
+                    {% if pagination.current > 1 %}
+                        <a href="?page={{ pagination.current - 1 }}{% if current_type %}&type={{ current_type }}{% endif %}{% if search %}&search={{ search }}{% endif %}" class="button">&laquo; Prev</a>
+                    {% endif %}
+                    
+                    <span class="page-info">Page {{ pagination.current }} of {{ pagination.total }}</span>
+
+                    {% if pagination.current < pagination.total %}
+                        <a href="?page={{ pagination.current + 1 }}{% if current_type %}&type={{ current_type }}{% endif %}{% if search %}&search={{ search }}{% endif %}" class="button">Next &raquo;</a>
+                    {% endif %}
+                </nav>
+            {% endif %}
+        {% else %}
+            <p class="empty">No symbols found matching your criteria.</p>
+        {% endif %}
+    </section>
+
+{% endblock %}

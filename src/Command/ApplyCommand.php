@@ -21,6 +21,7 @@ class ApplyCommand extends Command
     {
         $this
             ->addOption('project', 'p', InputOption::VALUE_REQUIRED, 'Project name')
+            ->addOption('run', 'r', InputOption::VALUE_REQUIRED, 'Scan run id')
             ->addOption('dry-run', null, InputOption::VALUE_NONE, 'Show diffs only, write nothing')
             ->addOption('interactive', 'i', InputOption::VALUE_NONE, 'Ask before each change')
             ->addOption('db', null, InputOption::VALUE_OPTIONAL, 'Database file path', Database::defaultPath());
@@ -29,20 +30,36 @@ class ApplyCommand extends Command
     protected function execute(InputInterface $input, OutputInterface $output): int
     {
         $projectName = $input->getOption('project');
+        $runId = $input->getOption('run');
         $dryRun = (bool) $input->getOption('dry-run');
         $interactive = (bool) $input->getOption('interactive');
         $dbPath = $input->getOption('db');
 
-        if (!$projectName) {
-            $output->writeln('<error>--project is required</error>');
+        if (!$projectName && !$runId) {
+            $output->writeln('<error>Either --project or --run is required</error>');
             return Command::FAILURE;
         }
 
         $api = new DatabaseApi($dbPath);
+        $project = null;
+        $scanRun = null;
 
-        $project = $api->projects()->findByName($projectName);
+        if ($runId !== null) {
+            $scanRun = $api->scanRuns()->findById((int) $runId);
+            if ($scanRun === null) {
+                $output->writeln(sprintf('<error>Scan run not found: %s</error>', (string) $runId));
+                return Command::FAILURE;
+            }
+            $project = $api->projects()->findById((int) $scanRun['project_id']);
+        } else {
+            $project = $api->projects()->findByName((string) $projectName);
+            if ($project !== null) {
+                $scanRun = $api->scanRuns()->findLatestByProject((int) $project['id'], 'completed');
+            }
+        }
+
         if (!$project) {
-            $output->writeln("<error>Project not found: {$projectName}</error>");
+            $output->writeln(sprintf('<error>Project not found: %s</error>', (string) $projectName));
             return Command::FAILURE;
         }
 
@@ -56,9 +73,11 @@ class ApplyCommand extends Command
         }
 
         $applier = new TemplateApplier($api);
+        $projectPath = (string) (($scanRun['source_path'] ?? null) ?: $project['path']);
         $stats = $applier->applyWithStats(
             (int) $project['id'],
-            $project['path'],
+            $projectPath,
+            $scanRun !== null ? (int) $scanRun['id'] : null,
             $dryRun,
             $interactive,
             $output,

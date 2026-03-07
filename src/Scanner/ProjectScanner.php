@@ -13,7 +13,7 @@ use DrupalEvolver\TreeSitter\Parser;
 use Symfony\Component\Console\Helper\ProgressBar;
 use Symfony\Component\Console\Output\OutputInterface;
 
-class ProjectScanner
+final class ProjectScanner
 {
     private FileClassifier $classifier;
     private int $workerCount = 1;
@@ -32,12 +32,39 @@ class ProjectScanner
         $this->workerCount = max(1, $count);
     }
 
+    #[\NoDiscard]
     public function scan(
         string $path,
         string $targetVersion,
         ?string $fromVersion = null,
         ?OutputInterface $output = null,
-    ): void {
+        ?callable $onProgress = null,
+    ): int {
+        $path = rtrim(realpath($path) ?: $path, '/');
+        $projectName = basename($path);
+        $projectId = $this->api->projects()->save($projectName, $path, null, $fromVersion, 'local_path');
+        $scanRunId = $this->api->scanRuns()->create($projectId, $projectName, null, $path, $fromVersion, $targetVersion);
+
+        try {
+            (void) $this->scanIntoProject($projectId, $scanRunId, $path, $targetVersion, $fromVersion, $output, $onProgress);
+        } catch (\Throwable $e) {
+            $this->api->scanRuns()->markFailed($scanRunId, $e->getMessage());
+            throw $e;
+        }
+
+        return $scanRunId;
+    }
+
+    #[\NoDiscard]
+    public function scanIntoProject(
+        int $projectId,
+        ?int $scanRunId,
+        string $path,
+        string $targetVersion,
+        ?string $fromVersion = null,
+        ?OutputInterface $output = null,
+        ?callable $onProgress = null,
+    ): int {
         $path = rtrim(realpath($path) ?: $path, '/');
         $projectName = basename($path);
 
@@ -55,7 +82,6 @@ class ProjectScanner
 
         $fromVer = $this->api->versions()->findByTag($fromVersion);
         $toVer = $this->api->versions()->findByTag($targetVersion);
-
         if (!$fromVer || !$toVer) {
             throw new \InvalidArgumentException('Both versions must be indexed first');
         }
@@ -71,16 +97,25 @@ class ProjectScanner
         $changes = $this->api->changes()->findForUpgradePath((int) $fromVer['id'], (int) $toVer['id']);
         $output?->writeln(sprintf('Loaded <info>%d</info> changes to scan for', count($changes)));
 
-        if (empty($changes)) {
-            $output?->writeln('No matching changes found for this upgrade path.');
-            return;
+        $this->api->projects()->updateCoreVersion($projectId, $fromVersion);
+
+        $files = $this->collectFiles($path);
+        if ($scanRunId !== null) {
+            $this->api->scanRuns()->markRunning($scanRunId, null, $path, $fromVersion, count($files));
         }
 
-        $projectId = $this->api->projects()->save($projectName, $path, null, $fromVersion);
-
-        $deleted = $this->api->matches()->deleteByProject($projectId);
-        if ($deleted > 0) {
-            $output?->writeln(sprintf('Cleared <comment>%d</comment> previous matches for project <info>%s</info>', $deleted, $projectName));
+        if ($changes === []) {
+            $this->api->projects()->updateLastScanned($projectId);
+            if ($scanRunId !== null) {
+                $this->api->scanRuns()->markCompleted($scanRunId, 0, 0, [
+                    'total' => 0,
+                    'auto_fixable' => 0,
+                    'by_severity' => [],
+                    'by_change_type' => [],
+                ]);
+            }
+            $output?->writeln('No matching changes found for this upgrade path.');
+            return 0;
         }
 
         $changesByLanguage = [];
@@ -92,40 +127,75 @@ class ProjectScanner
             $changesByLanguage[$language][] = $change;
         }
 
-        $files = $this->collectFiles($path);
         $effectiveWorkerCount = $this->effectiveWorkerCount();
-        if ($this->workerCount > 1 && $effectiveWorkerCount === 1) {
-            $output?->writeln('<comment>pcntl is unavailable; falling back to sequential scanning.</comment>');
-        }
-        $output?->writeln(sprintf('Scanning <info>%d</info> files using <info>%d</info> worker%s', count($files), $effectiveWorkerCount, $effectiveWorkerCount === 1 ? '' : 's'));
+        $output?->writeln(sprintf(
+            'Scanning <info>%d</info> files using <info>%d</info> worker%s',
+            count($files),
+            $effectiveWorkerCount,
+            $effectiveWorkerCount === 1 ? '' : 's'
+        ));
+        $onProgress?->__invoke(0, count($files), 'Queued scan');
 
         if ($this->canRunParallel()) {
-            $this->scanParallel($files, $changesByLanguage, $projectId, $output);
+            $this->scanParallel($files, $changesByLanguage, $projectId, $scanRunId, $output, $onProgress);
         } else {
-            $this->scanSequential($files, $changesByLanguage, $projectId, $output);
+            $this->scanSequential($files, $changesByLanguage, $projectId, $scanRunId, $output, $onProgress);
         }
 
         $this->api->projects()->updateLastScanned($projectId);
 
-        $matchCount = $this->api->matches()->getTotalCountByProject($projectId);
+        $matchCount = $scanRunId !== null
+            ? $this->api->matches()->getTotalCountByRun($scanRunId)
+            : $this->api->matches()->getTotalCountByProject($projectId);
+
+        if ($scanRunId !== null) {
+            $summary = $this->api->summarizeScanRun($scanRunId);
+            $this->api->scanRuns()->markCompleted(
+                $scanRunId,
+                (int) $summary['total'],
+                (int) $summary['auto_fixable'],
+                $summary
+            );
+        }
+
         $output?->writeln('');
         $output?->writeln(sprintf('Found <info>%d</info> matches in project <info>%s</info>', $matchCount, $projectName));
+
+        return $matchCount;
     }
 
-    private function scanSequential(array $files, array $changesByLanguage, int $projectId, ?OutputInterface $output): void
-    {
+    private function scanSequential(
+        array $files,
+        array $changesByLanguage,
+        int $projectId,
+        ?int $scanRunId,
+        ?OutputInterface $output,
+        ?callable $onProgress,
+    ): void {
         $progress = $output ? new ProgressBar($output, count($files)) : null;
         $progress?->start();
 
         $matchRepo = $this->api->matches();
 
-        $scannedFiles = $this->api->db()->transaction(function () use ($files, $changesByLanguage, $projectId, $progress, $matchRepo): int {
+        $scannedFiles = $this->api->db()->transaction(function () use (
+            $files,
+            $changesByLanguage,
+            $projectId,
+            $scanRunId,
+            $progress,
+            $matchRepo,
+            $onProgress,
+        ): int {
             $scannedFiles = 0;
 
             foreach ($files as $file) {
-                $this->scanFile($file, $changesByLanguage, $projectId, $this->parser, $this->matchCollector, $matchRepo);
+                $this->scanFile($file, $changesByLanguage, $projectId, $scanRunId, $this->parser, $this->matchCollector, $matchRepo);
                 $progress?->advance();
                 $scannedFiles++;
+                $onProgress?->__invoke($scannedFiles, count($files), $file['relative_path']);
+                if ($scanRunId !== null) {
+                    $this->api->scanRuns()->updateProgress($scanRunId, $scannedFiles, count($files));
+                }
             }
 
             return $scannedFiles;
@@ -138,8 +208,14 @@ class ProjectScanner
         $progress?->finish();
     }
 
-    private function scanParallel(array $files, array $changesByLanguage, int $projectId, ?OutputInterface $output): void
-    {
+    private function scanParallel(
+        array $files,
+        array $changesByLanguage,
+        int $projectId,
+        ?int $scanRunId,
+        ?OutputInterface $output,
+        ?callable $onProgress,
+    ): void {
         $chunks = array_chunk($files, (int) ceil(count($files) / $this->workerCount));
         $pids = [];
         $workerDbs = [];
@@ -155,13 +231,13 @@ class ProjectScanner
             $workerDbs[] = $workerDbPath;
 
             $pid = pcntl_fork();
-
             if ($pid === -1) {
                 throw new \RuntimeException("Could not fork worker {$i}");
             }
 
             if ($pid === 0) {
-                // Child: Private DB
+                \DrupalEvolver\TreeSitter\FFIBinding::reset();
+
                 $db = new Database($workerDbPath);
                 (new Schema($db))->createAll();
 
@@ -169,11 +245,13 @@ class ProjectScanner
                 $matchRepo = new MatchRepo($db);
                 $matchCollector = new MatchCollector($parser->binding(), $parser->registry());
 
-                $scannedChunk = $db->transaction(function() use ($chunk, $changesByLanguage, $projectId, $parser, $matchCollector, $matchRepo): int {
+                $scannedChunk = $db->transaction(function () use ($chunk, $changesByLanguage, $projectId, $scanRunId, $parser, $matchCollector, $matchRepo): int {
                     $counter = 0;
+
                     foreach ($chunk as $file) {
-                        $this->scanFile($file, $changesByLanguage, $projectId, $parser, $matchCollector, $matchRepo);
-                        if (++$counter % 20 === 0) {
+                        $this->scanFile($file, $changesByLanguage, $projectId, $scanRunId, $parser, $matchCollector, $matchRepo);
+                        $counter++;
+                        if (($counter % 20) === 0) {
                             gc_collect_cycles();
                         }
                     }
@@ -186,13 +264,27 @@ class ProjectScanner
                 }
 
                 exit(0);
-            } else {
-                $pids[] = $pid;
             }
+
+            $pids[$pid] = [
+                'index' => $i,
+                'count' => count($chunk),
+                'db' => $workerDbPath,
+            ];
         }
 
-        foreach ($pids as $pid) {
+        $completedFiles = 0;
+        foreach ($pids as $pid => $workerInfo) {
             pcntl_waitpid($pid, $status);
+            if (!pcntl_wifexited($status) || pcntl_wexitstatus($status) !== 0) {
+                throw new \RuntimeException(sprintf('Parallel scan worker %d failed.', $workerInfo['index']));
+            }
+
+            $completedFiles += (int) $workerInfo['count'];
+            $onProgress?->__invoke($completedFiles, count($files), sprintf('Worker %d finished', $workerInfo['index'] + 1));
+            if ($scanRunId !== null) {
+                $this->api->scanRuns()->updateProgress($scanRunId, $completedFiles, count($files));
+            }
         }
 
         $output?->write('<info>Merging scan results...</info> ');
@@ -210,33 +302,39 @@ class ProjectScanner
 
         $mainPdo->beginTransaction();
         try {
-            $mainPdo->exec("INSERT INTO code_matches (project_id, change_id, file_path, line_start, line_end, byte_start, byte_end, matched_source, suggested_fix, fix_method, status, applied_at)
-                            SELECT project_id, change_id, file_path, line_start, line_end, COALESCE(byte_start, -1), COALESCE(byte_end, -1), matched_source, suggested_fix, fix_method, status, applied_at FROM worker.code_matches
-                            ON CONFLICT(project_id, change_id, file_path, byte_start, byte_end) DO UPDATE SET
-                                line_start = excluded.line_start,
-                                line_end = excluded.line_end,
-                                matched_source = excluded.matched_source,
-                                suggested_fix = excluded.suggested_fix,
-                                fix_method = excluded.fix_method,
-                                status = excluded.status,
-                                applied_at = excluded.applied_at");
+            $mainPdo->exec("INSERT OR REPLACE INTO code_matches (
+                                project_id, scan_run_id, scope_key, change_id, file_path,
+                                line_start, line_end, byte_start, byte_end,
+                                matched_source, suggested_fix, fix_method, status, applied_at
+                            )
+                            SELECT project_id, scan_run_id, scope_key, change_id, file_path,
+                                   line_start, line_end, COALESCE(byte_start, -1), COALESCE(byte_end, -1),
+                                   matched_source, suggested_fix, fix_method, status, applied_at
+                            FROM worker.code_matches");
             $mainPdo->commit();
         } catch (\Throwable $e) {
             $mainPdo->rollBack();
             throw $e;
         } finally {
-            $mainPdo->exec("DETACH DATABASE worker");
+            $mainPdo->exec('DETACH DATABASE worker');
         }
     }
 
-    private function scanFile(array $file, array $changesByLanguage, int $projectId, Parser $parser, MatchCollector $matchCollector, MatchRepo $matchRepo): int
-    {
+    private function scanFile(
+        array $file,
+        array $changesByLanguage,
+        int $projectId,
+        ?int $scanRunId,
+        Parser $parser,
+        MatchCollector $matchCollector,
+        MatchRepo $matchRepo,
+    ): int {
         $filePath = $file['path'];
         $relativePath = $file['relative_path'];
         $language = $file['language'];
 
         $relevantChanges = $changesByLanguage[$language] ?? [];
-        if (empty($relevantChanges)) {
+        if ($relevantChanges === []) {
             return 0;
         }
 
@@ -252,6 +350,7 @@ class ProjectScanner
 
             foreach ($matchCollector->collectMatches($root, $content, $language, $relevantChanges) as $match) {
                 $match['project_id'] = $projectId;
+                $match['scan_run_id'] = $scanRunId;
                 $match['file_path'] = $relativePath;
                 $matches[] = $match;
             }
@@ -264,7 +363,6 @@ class ProjectScanner
             unset($tree, $root, $matches, $content);
             return $persistedMatches;
         } catch (\Throwable) {
-            // Skip failed files
             return 0;
         }
     }
@@ -299,32 +397,24 @@ class ProjectScanner
             }
         );
 
-        $iterator = new \RecursiveIteratorIterator(
-            $filter,
-            \RecursiveIteratorIterator::LEAVES_ONLY
-        );
+        $iterator = new \RecursiveIteratorIterator($filter, \RecursiveIteratorIterator::SELF_FIRST);
 
         foreach ($iterator as $file) {
-            if (!$file->isFile()) {
-                continue;
-            }
-
-            $filePath = $file->getPathname();
-            $language = $this->classifier->classify($filePath);
-            if ($language === null) {
+            $language = $this->classifier->classify($file->getPathname());
+            if (!$file->isFile() || $language === null) {
                 continue;
             }
 
             $files[] = [
-                'path' => $filePath,
-                'relative_path' => substr($filePath, strlen($path) + 1),
+                'path' => $file->getPathname(),
+                'relative_path' => substr($file->getPathname(), strlen($path) + 1),
                 'language' => $language,
             ];
         }
 
         usort(
             $files,
-            static fn(array $a, array $b): int => strcmp($a['path'], $b['path'])
+            static fn(array $a, array $b): int => strcmp((string) $a['relative_path'], (string) $b['relative_path'])
         );
 
         return $files;
@@ -334,15 +424,16 @@ class ProjectScanner
     {
         if (is_readable('/proc/cpuinfo')) {
             $cpuinfo = file_get_contents('/proc/cpuinfo');
-            preg_match_all('/^processor/m', $cpuinfo, $matches);
+            preg_match_all('/^processor/m', (string) $cpuinfo, $matches);
             return count($matches[0]);
         }
+
         return 4;
     }
 
     private function canRunParallel(): bool
     {
-        return $this->workerCount > 1 && function_exists('pcntl_fork');
+        return $this->workerCount > 1 && function_exists('pcntl_fork') && $this->api->getPath() !== ':memory:';
     }
 
     private function effectiveWorkerCount(): int

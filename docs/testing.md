@@ -121,6 +121,23 @@ Integration tests that exercise the full tree-sitter FFI pipeline run inside the
 make e -- vendor/bin/phpunit tests/Unit/Integration
 ```
 
+### Opt-in Remote Git Integration Test
+
+There is also a network-gated integration test that fetches the Drupal `contact` project from Drupal.org Git, materializes two branches, indexes both trees, and diffs them:
+```bash
+docker compose exec -T evolver sh -lc '
+  EVOLVER_RUN_NETWORK_TESTS=1 \
+  vendor/bin/phpunit tests/Unit/Integration/RemoteContactModulePipelineTest.php
+'
+```
+
+Optional overrides:
+- `EVOLVER_REMOTE_CONTACT_URL`
+- `EVOLVER_REMOTE_CONTACT_MODERN_BRANCH`
+- `EVOLVER_REMOTE_CONTACT_LEGACY_BRANCH`
+
+By default the test uses `1.x` as the modern branch and `7.x-2.x` as the legacy branch, then diffs `1.x -> 7.x-2.x` so the current differ exercises the richer removal-side YAML and PHP change detection.
+
 ## Coverage Targets
 
 Current baseline:

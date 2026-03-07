@@ -12,20 +12,16 @@ services:
     volumes:
       - .:/app
       - ./.cache/composer:/home/evolver/.composer/cache
+      - ../drupal:/mnt/drupal:ro
+    ports:
+      - 127.0.0.1:8080:8080
     environment:
       EVOLVER_DB: /app/.data/evolver.sqlite
       EVOLVER_GRAMMAR_PATH: /usr/lib
-    entrypoint: []
     command:
-      - tail
-      - -f
-      - /dev/null
+      - sh
+      - -c
+      - "php85 bin/evolver queue:work --sleep=2 & php85 bin/evolver serve --host=0.0.0.0 --port=8080"
     stdin_open: true
     tty: true
     init: true
-    # Enable io_uring for Swoole 6.x
-    cap_add:
-      - SYS_ADMIN
-    security_opt:
-      - seccomp=./docker/seccomp/swoole-io_uring.json
-      - systempaths=unconfined

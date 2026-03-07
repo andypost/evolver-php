@@ -9,6 +9,8 @@ That service is used for:
 - ad-hoc shell commands (`make e -- ...`)
 - one-off external analysis via `make er -- ...` and `make evr -- ...`
 - interactive shell (`make shell`)
+- the Amp web UI (`make web`)
+- the queue worker (`make worker`)
 - FFI readiness checks (`make r`)
 
 ## Why One Container Is Enough
@@ -53,7 +55,7 @@ Core and grammar libraries come from Alpine packages:
 FFI is enabled by Alpine PHP config (series-aware path: `/etc/phpXX/conf.d/...`):
 
 ```ini
-ffi.enable=true
+ffi.enable=1
 ```
 
 ### 3) Runtime library resolution (no manual bootstrap required)
@@ -79,8 +81,15 @@ This means FFI parsing works even when `/app` is bind-mounted from host.
 # Build image
 make build
 
+# Start the long-running service
+make up
+
 # Check status
 make ev -- status
+
+# Start the local web UI and worker in separate terminals
+make web
+make worker
 
 # Run any shell command inside the same container image
 make e -- php --ri FFI
@@ -94,25 +103,15 @@ make r
 
 ## Memprof Profiling (Parser/Scanner)
 
-Current `make memprof-*` targets run with `php85`:
+Use the consolidated profiling targets:
 
 ```bash
 make up
+make profile EXTRA_HOST_PATH=../drupal
+make profile-report
 ```
 
-Parser-heavy indexing profile:
-
-```bash
-make memprof-index MEMPROF_ITERATIONS=5 INDEX_PATH=/mnt/project/core/modules/user INDEX_TAG=10.3.0 EXTRA_HOST_PATH=../drupal
-```
-
-Scanner profile:
-
-```bash
-make memprof-scan MEMPROF_ITERATIONS=5 SCAN_PATH=/mnt/project SCAN_TARGET=11.0.0 EXTRA_HOST_PATH=../my-custom-module
-```
-
-Reports are written to `.data/memprof/index` and `.data/memprof/scan`.
+Reports are written under `.data/profiles/`.
 
 ## Index and Compare Core
 
@@ -123,6 +122,18 @@ make ev -- diff --from=10.2.0 --to=10.3.0
 ```
 
 Only the `evolver` service is needed for this full flow.
+
+## Local Web UI
+
+The compose service publishes the web UI at `127.0.0.1:8080`.
+
+```bash
+make up
+make web
+make worker
+```
+
+Then open `http://localhost:8080`.
 
 ## Troubleshooting
 
@@ -143,7 +154,7 @@ make e -- php --ri FFI
 
 ### memprof missing
 
-If `make memprof-*` prints that memprof is unavailable, rebuild the image and verify module loading:
+If profiling reports that memprof is unavailable, rebuild the image and verify module loading:
 
 ```bash
 make build
@@ -157,17 +168,6 @@ Check installed libs:
 
 ```bash
 make e -- ls -la /usr/lib/libtree-sitter.so* /usr/lib/libtree-sitter-php.so /usr/lib/libtree-sitter-yaml.so
-```
-
-### Swoole `io_uring` permission error
-
-If Swoole prints `Iouring::Iouring(): Failed to initialize io_uring instance, Error: Operation not permitted[1]`, the container is still running under Docker's built-in seccomp profile.
-
-Recreate the service so the repo-local seccomp profile from `compose.yaml` is applied:
-
-```bash
-docker compose up -d --force-recreate evolver
-docker compose exec -T evolver php85 -r 'Swoole\Coroutine\run(function(){ echo strlen(file_get_contents("/etc/hosts")) . "\n"; });'
 ```
 
 ### Permission issues on generated files

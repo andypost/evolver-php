@@ -1,0 +1,97 @@
+{% extends "layout.twig" %}
+
+{% block content %}
+    <section class="hero hero-compact">
+        <div>
+            <p class="eyebrow">Run Comparison</p>
+            <h1>{{ project.name }}</h1>
+        </div>
+        <a class="button" href="/projects/{{ project.id }}">Back to project</a>
+    </section>
+
+    <section class="panel panel-form">
+        <div class="panel-head">
+            <h2>Select two runs</h2>
+        </div>
+        <form class="form form-inline" action="/projects/{{ project.id }}/compare" method="get">
+            <label>
+                <span>Base run</span>
+                <select name="base_run" required>
+                    <option value="">Choose…</option>
+                    {% for run in runs %}
+                        <option value="{{ run.id }}" {% if run.id == base_run_id %}selected{% endif %}>#{{ run.id }} · {{ run.branch_name }} · {{ run.status }}</option>
+                    {% endfor %}
+                </select>
+            </label>
+
+            <label>
+                <span>Head run</span>
+                <select name="head_run" required>
+                    <option value="">Choose…</option>
+                    {% for run in runs %}
+                        <option value="{{ run.id }}" {% if run.id == head_run_id %}selected{% endif %}>#{{ run.id }} · {{ run.branch_name }} · {{ run.status }}</option>
+                    {% endfor %}
+                </select>
+            </label>
+
+            <button class="button button-primary" type="submit">Compare</button>
+        </form>
+    </section>
+
+    {% if error %}
+        <section class="panel">
+            <p class="empty">{{ error }}</p>
+        </section>
+    {% endif %}
+
+    {% if comparison %}
+        <section class="grid three-up">
+            <article class="panel stat-panel">
+                <span class="meta-label">Introduced</span>
+                <strong>{{ comparison.summary.introduced.count }}</strong>
+            </article>
+            <article class="panel stat-panel">
+                <span class="meta-label">Resolved</span>
+                <strong>{{ comparison.summary.resolved.count }}</strong>
+            </article>
+            <article class="panel stat-panel">
+                <span class="meta-label">Persisting</span>
+                <strong>{{ comparison.summary.persisting.count }}</strong>
+            </article>
+        </section>
+
+        {% for bucket, rows in {
+            'Introduced': comparison.introduced,
+            'Resolved': comparison.resolved,
+            'Persisting': comparison.persisting
+        } %}
+            <section class="panel">
+                <div class="panel-head">
+                    <h2>{{ bucket }}</h2>
+                </div>
+                {% if rows %}
+                    <table class="table">
+                        <thead>
+                        <tr>
+                            <th>File</th>
+                            <th>Change</th>
+                            <th>Severity</th>
+                        </tr>
+                        </thead>
+                        <tbody>
+                        {% for row in rows %}
+                            <tr>
+                                <td>{{ row.file_path }}</td>
+                                <td>{{ row.change_type }}</td>
+                                <td>{{ row.severity }}</td>
+                            </tr>
+                        {% endfor %}
+                        </tbody>
+                    </table>
+                {% else %}
+                    <p class="empty">No {{ bucket|lower }} findings.</p>
+                {% endif %}
+            </section>
+        {% endfor %}
+    {% endif %}
+{% endblock %}

@@ -397,6 +397,188 @@ class DatabaseApiTest extends TestCase
         $this->assertSame(2, $decreased[0]['old']['param_count']);
         $this->assertSame(1, $decreased[0]['new']['param_count']);
     }
+
+    public function testSearchSemanticYamlSymbolsFindsModuleMentions(): void
+    {
+        $versionId = $this->api->versions()->create('10.2.0', 10, 2, 0);
+        $fileId = $this->api->files()->create($versionId, 'modules/custom/example/example.info.yml', 'yaml', 'h1', null, null, 10, 100);
+
+        $this->createSymbol([
+            'version_id' => $versionId,
+            'file_id' => $fileId,
+            'language' => 'yaml',
+            'symbol_type' => 'module_info',
+            'fqn' => 'example',
+            'name' => 'example',
+            'signature_hash' => 'yaml_hash_1',
+            'signature_json' => '{"dependencies":["drupal:block","drupal:node"]}',
+            'metadata_json' => '{"label":"Example","dependency_targets":["block","node"],"mentioned_extensions":["block","node"],"configure_route":"example.settings"}',
+        ]);
+
+        $results = $this->api->searchSemanticYamlSymbols($versionId, 'block', ['module_info']);
+
+        $this->assertCount(1, $results);
+        $this->assertSame('module_info', $results[0]['symbol_type']);
+        $this->assertSame('example', $results[0]['fqn']);
+        $this->assertSame('modules/custom/example/example.info.yml', $results[0]['file_path']);
+    }
+
+    public function testSearchSemanticYamlSymbolsFindsRouteReferences(): void
+    {
+        $versionId = $this->api->versions()->create('10.2.0', 10, 2, 0);
+        $fileId = $this->api->files()->create($versionId, 'core/modules/block/block.links.contextual.yml', 'yaml', 'h2', null, null, 10, 100);
+
+        $this->createSymbol([
+            'version_id' => $versionId,
+            'file_id' => $fileId,
+            'language' => 'yaml',
+            'symbol_type' => 'link_contextual',
+            'fqn' => 'block_configure',
+            'name' => 'block_configure',
+            'signature_hash' => 'yaml_hash_2',
+            'signature_json' => '{"route_name":"entity.block.edit_form"}',
+            'metadata_json' => '{"label":"Configure block","route_name":"entity.block.edit_form","route_refs":["entity.block.edit_form"],"group":"block"}',
+        ]);
+
+        $results = $this->api->searchSemanticYamlSymbols($versionId, 'entity.block.edit_form', ['link_contextual']);
+
+        $this->assertCount(1, $results);
+        $this->assertSame('block_configure', $results[0]['fqn']);
+        $this->assertSame('core/modules/block/block.links.contextual.yml', $results[0]['file_path']);
+    }
+
+    public function testSearchSemanticYamlSymbolsFindsServiceByClassName(): void
+    {
+        $versionId = $this->api->versions()->create('10.2.0', 10, 2, 0);
+        $fileId = $this->api->files()->create($versionId, 'core/modules/block/block.services.yml', 'yaml', 'h4', null, null, 10, 100);
+        $classFileId = $this->api->files()->create($versionId, 'core/modules/block/src/BlockRepository.php', 'php', 'h5', null, null, 10, 100);
+
+        $this->createSymbol([
+            'version_id' => $versionId,
+            'file_id' => $classFileId,
+            'language' => 'php',
+            'symbol_type' => 'class',
+            'fqn' => 'Drupal\\block\\BlockRepository',
+            'name' => 'BlockRepository',
+            'namespace' => 'Drupal\\block',
+            'signature_hash' => 'php_hash_1',
+        ]);
+
+        $this->createSymbol([
+            'version_id' => $versionId,
+            'file_id' => $fileId,
+            'language' => 'yaml',
+            'symbol_type' => 'service',
+            'fqn' => 'block.repository',
+            'name' => 'block.repository',
+            'signature_hash' => 'yaml_hash_4',
+            'signature_json' => '{"class":"Drupal\\\\block\\\\BlockRepository","arguments":"[@entity_type.manager]"}',
+        ]);
+
+        $results = $this->api->searchSemanticYamlSymbols($versionId, 'Drupal\\block\\BlockRepository', ['service']);
+
+        $this->assertCount(1, $results);
+        $this->assertSame('block.repository', $results[0]['fqn']);
+        $this->assertSame('Drupal\\block\\BlockRepository', $results[0]['resolved_class_fqn']);
+        $this->assertSame('core/modules/block/src/BlockRepository.php', $results[0]['resolved_class_file_path']);
+    }
+
+    public function testFindSemanticLinksForServiceSymbol(): void
+    {
+        $versionId = $this->api->versions()->create('10.2.0', 10, 2, 0);
+        $yamlFileId = $this->api->files()->create($versionId, 'core/modules/block/block.services.yml', 'yaml', 'h4', null, null, 10, 100);
+        $phpFileId = $this->api->files()->create($versionId, 'core/modules/block/src/BlockRepository.php', 'php', 'h5', null, null, 10, 100);
+
+        $this->createSymbol([
+            'version_id' => $versionId,
+            'file_id' => $phpFileId,
+            'language' => 'php',
+            'symbol_type' => 'class',
+            'fqn' => 'Drupal\\block\\BlockRepository',
+            'name' => 'BlockRepository',
+            'namespace' => 'Drupal\\block',
+            'signature_hash' => 'php_hash_2',
+        ]);
+
+        $serviceId = $this->createSymbol([
+            'version_id' => $versionId,
+            'file_id' => $yamlFileId,
+            'language' => 'yaml',
+            'symbol_type' => 'service',
+            'fqn' => 'block.repository',
+            'name' => 'block.repository',
+            'signature_hash' => 'yaml_hash_5',
+            'signature_json' => '{"class":"Drupal\\\\block\\\\BlockRepository"}',
+        ]);
+
+        $links = $this->api->findSemanticLinksForSymbol($serviceId);
+
+        $this->assertCount(1, $links);
+        $this->assertSame('implementation_class', $links[0]['relationship']);
+        $this->assertSame('Drupal\\block\\BlockRepository', $links[0]['symbol']['fqn']);
+        $this->assertSame('core/modules/block/src/BlockRepository.php', $links[0]['symbol']['file_path']);
+    }
+
+    public function testFindSemanticLinksForClassSymbol(): void
+    {
+        $versionId = $this->api->versions()->create('10.2.0', 10, 2, 0);
+        $yamlFileId = $this->api->files()->create($versionId, 'core/modules/block/block.services.yml', 'yaml', 'h4', null, null, 10, 100);
+        $phpFileId = $this->api->files()->create($versionId, 'core/modules/block/src/BlockRepository.php', 'php', 'h5', null, null, 10, 100);
+
+        $classId = $this->createSymbol([
+            'version_id' => $versionId,
+            'file_id' => $phpFileId,
+            'language' => 'php',
+            'symbol_type' => 'class',
+            'fqn' => 'Drupal\\block\\BlockRepository',
+            'name' => 'BlockRepository',
+            'namespace' => 'Drupal\\block',
+            'signature_hash' => 'php_hash_3',
+        ]);
+
+        $this->createSymbol([
+            'version_id' => $versionId,
+            'file_id' => $yamlFileId,
+            'language' => 'yaml',
+            'symbol_type' => 'service',
+            'fqn' => 'block.repository',
+            'name' => 'block.repository',
+            'signature_hash' => 'yaml_hash_6',
+            'signature_json' => '{"class":"Drupal\\\\block\\\\BlockRepository"}',
+        ]);
+
+        $links = $this->api->findSemanticLinksForSymbol($classId);
+
+        $this->assertCount(1, $links);
+        $this->assertSame('registered_service', $links[0]['relationship']);
+        $this->assertSame('block.repository', $links[0]['symbol']['fqn']);
+        $this->assertSame('core/modules/block/block.services.yml', $links[0]['symbol']['file_path']);
+    }
+
+    public function testSearchSemanticYamlSymbolsFindsExportedConfigDependencies(): void
+    {
+        $versionId = $this->api->versions()->create('10.2.0', 10, 2, 0);
+        $fileId = $this->api->files()->create($versionId, 'db/config/system.site.yml', 'yaml', 'h3', null, null, 10, 100);
+
+        $this->createSymbol([
+            'version_id' => $versionId,
+            'file_id' => $fileId,
+            'language' => 'yaml',
+            'symbol_type' => 'config_export',
+            'fqn' => 'system.site',
+            'name' => 'system.site',
+            'signature_hash' => 'yaml_hash_3',
+            'signature_json' => '{"dependencies":{"module":["block","node"]},"status":true}',
+            'metadata_json' => '{"top_level_keys":["dependencies","status"],"dependency_modules":["block","node"],"skipped_keys":["uuid","langcode","_core.default_config_hash"]}',
+        ]);
+
+        $results = $this->api->searchSemanticYamlSymbols($versionId, 'node', ['config_export']);
+
+        $this->assertCount(1, $results);
+        $this->assertSame('config_export', $results[0]['symbol_type']);
+        $this->assertSame('system.site', $results[0]['fqn']);
+    }
+
     private function createSymbol(array $data): int
     {
         $id = $this->api->symbols()->create($data);

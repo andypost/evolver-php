@@ -38,8 +38,43 @@ class QueryGenerator
             return $this->stringReference($name);
         }
 
+        if (in_array($changeType, [
+            'module_info_changed',
+            'module_dependencies_changed',
+            'profile_info_changed',
+            'profile_dependencies_changed',
+            'theme_info_changed',
+            'theme_base_changed',
+            'theme_engine_info_changed',
+            'link_menu_changed',
+            'link_task_changed',
+            'link_action_changed',
+            'link_contextual_changed',
+            'config_object_changed',
+            'recipe_changed',
+            'recipe_install_changed',
+        ], true)) {
+            return $this->queryBySymbol($symbol);
+        }
+
         if ($changeType === 'deprecated_added') {
             return $this->queryBySymbol($symbol);
+        }
+
+        if ($changeType === 'global_replaced') {
+            return $this->globalVariableReference($name);
+        }
+
+        if ($changeType === 'constant_replaced') {
+            return $this->constantReference($name);
+        }
+
+        if ($changeType === 'variable_access_replaced') {
+            return $this->propertyAccess($name);
+        }
+
+        if ($changeType === 'function_call_rewrite') {
+            return $this->functionCall($name);
         }
 
         if (str_ends_with($changeType, '_removed') || str_ends_with($changeType, '_renamed')) {
@@ -159,11 +194,40 @@ class QueryGenerator
             'class', 'interface', 'trait', 'constant' => $this->classReference($symbol, $name),
             'service' => $this->serviceReference($name),
             'route', 'permission', 'config_schema', 'library',
-            'module_info', 'theme_info',
+            'module_info', 'theme_info', 'profile_info', 'theme_engine_info',
             'link_menu', 'link_task', 'link_action', 'link_contextual',
-            'breakpoint' => $this->stringReference($name),
+            'breakpoint', 'config_export', 'recipe_manifest' => $this->stringReference($name),
             default => null,
         };
+    }
+
+    /**
+     * Match global variable declarations and $GLOBALS access.
+     *
+     * global $user; OR $GLOBALS['user']
+     */
+    private function globalVariableReference(string $name): string
+    {
+        $literal = $this->escapeLiteral($name);
+        return "(global_declaration (variable_name) @var (#eq? @var \"\${$literal}\"))";
+    }
+
+    /**
+     * Match constant references (bare identifiers like LANGUAGE_NONE).
+     */
+    private function constantReference(string $name): string
+    {
+        $literal = $this->escapeLiteral($name);
+        return "(name) @const (#eq? @const \"{$literal}\")";
+    }
+
+    /**
+     * Match property access patterns like $node->nid.
+     */
+    private function propertyAccess(string $name): string
+    {
+        $literal = $this->escapeLiteral($name);
+        return "(member_access_expression name: (name) @prop (#eq? @prop \"{$literal}\"))";
     }
 
     private function escapeLiteral(string $value): string

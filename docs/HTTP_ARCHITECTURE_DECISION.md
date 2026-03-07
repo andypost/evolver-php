@@ -2,206 +2,107 @@
 
 ## Date: 2026-03-07
 
-## Context
+## Decision
 
-DrupalEvolver needs an HTTP backend for:
-- Project management (clone, index, scan)
-- Search functionality
-- Real-time progress tracking during indexing
-- Git branch management
+Evolver uses a hybrid architecture:
+- **Amp HTTP server + Twig + SSE** for the local web UI
+- **blocking Symfony console workers** for queued Git and scan jobs
+- **existing `pcntl_fork` scanner/indexer paths** for CPU-heavy analysis
 
-## Options Considered
+Amp is the HTTP control plane. It is not the runtime for indexing or scanning work.
 
-### 1. Swoole (❌ Not Viable)
+## Why This Was Chosen
 
-**Status:** Rejected due to Docker io_uring restrictions
+The product needs:
+- a simple local dashboard
+- normal HTML forms
+- live progress updates
+- no Node/Vite frontend
+- no Docker privilege requirements
+- no rewrite of the current high-performance scanner/indexer pipeline
 
-**Findings:**
-- Swoole 6.x requires io_uring syscalls
-- Docker containers without privileged mode cannot access io_uring
-- Error: `Iouring::Iouring(): Failed to initialize io_uring instance, Error: Operation not permitted`
-- Would require `--cap-add SYS_ADMIN` or custom seccomp profile
-- Even with privileges, FFI coroutine-safety is questionable
+Amp fit that shape because it gives:
+- a native PHP HTTP server
+- straightforward routing
+- SSE support over normal HTTP
+- no extra container privileges
 
-**Benchmark:** Not runnable in current Docker setup
+At the same time, the analysis engine already performs best as blocking process-based work, so that part stays on the current CLI path.
 
----
+## Rejected Alternatives
 
-### 2. AmpHP (⚠️ Working but Slow)
+### Swoole
 
-**Status:** Working but 2.6x slower than baseline
+Rejected.
 
-**Findings:**
-- Pure PHP, no extensions required (only ext-posix for process management)
-- Fiber-based async (Revolt Event Loop)
-- Worker isolation via separate processes
-- Good FFI compatibility (each worker has isolated memory space)
+Reasons:
+- unnecessary complexity for the current UI
+- extra operational constraints in containers
+- no advantage for a mostly HTML + SSE local app
 
-**Benchmark Results (4 workers):**
-| Metric | Value |
-|--------|-------|
-| Avg Time | 0.279s |
-| Throughput | 172.2 files/sec |
-| Peak Memory | 6 MB |
-| Speedup vs baseline | 0.38x (slower) |
+### RoadRunner
 
-**Pros:**
-- No special Docker privileges required
-- Clean async API with fibers
-- Good for HTTP + WebSocket + SSE
+Rejected for v1.
 
-**Cons:**
-- **2.6x slower** than pcntl_fork baseline
-- Higher memory overhead (+2 MB peak)
-- More complex API (Tasks must be autoloadable)
-- Requires ext-posix (added to Dockerfile)
+Reasons:
+- more infrastructure than needed for a local/internal tool
+- would still require separate job orchestration
+- the app does not need PSR-7 worker management badly enough to justify the extra moving parts yet
 
----
+### Full async Amp workers
 
-### 3. pcntl_fork Baseline (✅ Fastest)
+Rejected.
 
-**Status:** Current implementation, best performance
+Reasons:
+- the real indexing/scanning workload is already tuned around `pcntl_fork`
+- moving heavy analysis into async tasks would add complexity without improving throughput
 
-**Benchmark Results (4 workers):**
-| Metric | Value |
-|--------|-------|
-| Avg Time | 0.107s |
-| Throughput | 449.4 files/sec |
-| Peak Memory | 4 MB |
-| Speedup vs baseline | 1.00x (reference) |
-
-**Pros:**
-- **Fastest** indexing performance
-- Lowest memory footprint
-- Simple, proven architecture
-- Works perfectly with FFI + SQLite WAL
-
-**Cons:**
-- Blocking (no built-in HTTP server)
-- Need separate HTTP frontend for UI
-
----
-
-## Recommended Architecture
-
-### Hybrid: RoadRunner + pcntl_fork Workers
+## Resulting Architecture
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                    RoadRunner Server                      │
-│  (Go binary, manages PHP workers)                         │
-└────┬──────────────────────┬─────────────────────────────┘
-     │                      │
-┌────▼──────────────┐  ┌────▼────────────────────────────┐
-│   HTTP Workers    │  │   Process Pool (background)     │
-│   (PSR-7/PSR-15)  │  │                                 │
-│                   │  │  ┌─────────────────────────────┐│
-│  - Controllers    │  │  │  Symfony Console Commands   ││
-│  - Twig templates │  │  │                             ││
-│  - JSON API       │  │  │  - evolver index            ││
-│  - SSE endpoint   │  │  │  - evolver diff             ││
-│                   │  │  │  - git clone                ││
-│                   │  │  └─────────────────────────────┘│
-└────┬──────────────┘  └─────────────────────────────────┘
-     │
-┌────▼─────────────────────────────────────────────────────┐
-│              DatabaseApi → SQLite (WAL)                  │
-│              FFIBinding → tree-sitter                    │
-│              CoreIndexer (with pcntl_fork)               │
-└──────────────────────────────────────────────────────────┘
+Browser
+  │
+  ▼
+Amp HTTP server
+  │
+  ├── Twig pages
+  ├── form handlers
+  └── SSE job/run updates
+  │
+  ▼
+SQLite (projects, branches, scan_runs, jobs, job_logs, matches)
+  ▲
+  │
+queue:work command
+  │
+  ├── Git materialization
+  ├── source version detection
+  └── ProjectScanner / TemplateApplier / existing services
 ```
 
-### Why This Architecture?
+## Operational Model
 
-1. **Best Performance:** Uses pcntl_fork for indexing (449 files/sec)
-2. **HTTP Frontend:** RoadRunner provides persistent HTTP server
-3. **No io_uring Issues:** RoadRunner doesn't require special privileges
-4. **FFI Safe:** Each worker/process has isolated memory
-5. **SQLite WAL:** Works perfectly with multiple readers
-6. **Background Jobs:** RoadRunner jobs queue for long-running tasks
-7. **SSE Support:** Can stream indexing progress via Server-Sent Events
+- `make web` starts the HTTP server on `http://localhost:8080`
+- `make worker` processes queued jobs
+- `make evr -- ... EXTRA_HOST_PATH=...` remains the path for one-off external CLI analysis
+- scans are persisted as `scan_runs`; history is preserved and comparable
 
-### Alternatives Considered
+## Consequences
 
-| Option | Performance | Complexity | Docker-Friendly | Verdict |
-|--------|-------------|------------|-----------------|---------|
-| Swoole | Unknown | Medium | ❌ (io_uring) | Rejected |
-| AmpHP | 172 files/sec | High | ✅ | Too slow |
-| Symfony Full-Stack | ~100 files/sec | High | ✅ | Overkill |
-| ReactPHP | Unknown | Medium | ✅ | Complex IPC |
-| **RoadRunner + pcntl_fork** | **449 files/sec** | **Low** | ✅ | **Recommended** |
+Benefits:
+- simple local deployment
+- minimal frontend stack
+- live progress with SSE
+- no rewrite of the analysis engine
+- no special Docker seccomp/capability requirements
 
----
+Tradeoffs:
+- web and worker run as separate processes
+- no bidirectional realtime protocol in v1
+- no multi-node or multi-tenant story yet
 
-## Implementation Plan
+## Next Follow-Up
 
-### Phase 1: RoadRunner Setup
-1. Add `spiral/roadrunner-http` to composer.json
-2. Create `.rr.yaml` configuration
-3. Add HTTP worker bootstrap
-4. Create basic controllers (Project, Search, Index)
-
-### Phase 2: Background Jobs
-1. Add `spiral/roadrunner-jobs` to composer.json
-2. Create job wrappers for Symfony Console commands
-3. Implement SSE endpoint for progress streaming
-4. Add Redis/SQLite job queue
-
-### Phase 3: Git Integration
-1. Create Git wrapper for clone/checkout/fetch
-2. Add project management UI
-3. Implement branch selection
-4. Add real-time progress tracking
-
-### Phase 4: Search & UI
-1. Implement full-text search (SQLite FTS5)
-2. Create Vanilla JS frontend
-3. Add Twig templates
-4. Implement responsive design
-
----
-
-## Performance Expectations
-
-Based on benchmarks:
-
-| Operation | Expected Performance |
-|-----------|---------------------|
-| HTTP Response Time | < 50ms (p99) |
-| Indexing (src/ 48 files) | ~0.1s with 4 workers |
-| Indexing (Drupal Core ~6000 files) | ~8-10s with 4 workers |
-| Search Query | < 100ms |
-| Git Clone | Network dependent |
-| SSE Progress Updates | Real-time (100ms interval) |
-
----
-
-## Risk Mitigation
-
-| Risk | Mitigation |
-|------|------------|
-| RoadRunner worker crash | Auto-restart with `--retry` |
-| SQLite WAL contention | Use WAL mode + busy_timeout |
-| FFI memory leaks | Worker recycling + gc_collect_cycles() |
-| Long-running indexing | Background jobs + progress SSE |
-| Git SSH keys | Volume mount ~/.ssh |
-
----
-
-## Conclusion
-
-**Recommended:** RoadRunner HTTP frontend + pcntl_fork worker processes
-
-This architecture provides:
-- ✅ Best indexing performance (449 files/sec)
-- ✅ Clean HTTP API with PSR-7/PSR-15
-- ✅ Background job processing
-- ✅ Real-time progress streaming
-- ✅ No Docker privilege requirements
-- ✅ FFI + SQLite compatibility
-
-**Next Steps:**
-1. Review and approve this architecture decision
-2. Create implementation roadmap
-3. Set up RoadRunner configuration
-4. Implement MVP HTTP endpoints
+- expand web coverage with handler tests
+- add project-type aware UI flows for Drupal custom module analysis
+- keep core indexing/diffing CLI-first until the project scan UX settles

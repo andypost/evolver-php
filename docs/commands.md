@@ -121,11 +121,11 @@ evolver scan <path> --target=<version> [--from=<version>] [--workers=<n>] [--db=
 1. Detects current core version from `composer.lock` (or uses `--from`)
 2. Loads all changes between current and target versions
 3. Reuses or updates the project row keyed by filesystem path
-4. Replaces previous matches for that project before each re-scan
+4. Creates a new `scan_run` so prior scan history is preserved
 5. Walks project files (skips `vendor/` and `node_modules/`)
 6. Parses each file with tree-sitter
 7. Runs each change's `ts_query` against the parsed tree
-8. Upserts matches in `code_matches` using project, change, path, and byte range identity
+8. Stores run-scoped matches in `code_matches` using scan run, change, path, and byte range identity
 
 **Example:**
 ```bash
@@ -145,6 +145,7 @@ Loaded 142 changes to scan for
 Scanning 87 files
  87/87 [============================] 100%
 Found 12 matches in project mymodule
+Scan run: 7
 ```
 
 ---
@@ -154,17 +155,18 @@ Found 12 matches in project mymodule
 Apply template-based fixes to scanned matches.
 
 ```
-evolver apply --project=<name> [--dry-run] [--interactive] [--db=<path>]
+evolver apply (--project=<name> | --run=<id>) [--dry-run] [--interactive] [--db=<path>]
 ```
 
 **Options:**
-- `--project`, `-p` — Project name (as registered during scan). Required.
+- `--project`, `-p` — Project name. Optional when `--run` is provided.
+- `--run`, `-r` — Specific scan run id. Optional when `--project` is provided.
 - `--dry-run` — Show diffs only, write nothing.
 - `--interactive`, `-i` — Ask yes/no before each change.
 - `--db` — Database file path.
 
 **What it does:**
-1. Loads pending matches that have fix templates
+1. Loads pending matches that have fix templates from the requested run, or from the latest completed run for the project
 2. Groups by file, sorts bottom-up by byte offset (fallback: line number)
 3. For each match: applies the template, generates diff
 4. Uses byte offsets when available for deterministic replacements (fallback to text search for legacy matches; ambiguous legacy matches are failed, not guessed)
@@ -183,6 +185,9 @@ evolver apply --project=<name> [--dry-run] [--interactive] [--db=<path>]
 ```bash
 # Preview changes
 make ev -- apply --project=mymodule --dry-run
+
+# Preview a specific run
+make ev -- apply --run=7 --dry-run
 
 # Apply interactively
 make ev -- apply --project=mymodule --interactive
@@ -209,17 +214,19 @@ make ev -- apply --project=mymodule
 Show scan results and upgrade readiness.
 
 ```
-evolver report --project=<name> [--format=table|json] [--db=<path>]
+evolver report (--project=<name> | --run=<id>) [--format=table|json] [--db=<path>]
 ```
 
 **Options:**
-- `--project`, `-p` — Project name. Required.
+- `--project`, `-p` — Project name. Optional when `--run` is provided.
+- `--run`, `-r` — Specific scan run id. Optional when `--project` is provided.
 - `--format`, `-f` — Output format: `table` (default) or `json`.
 - `--db` — Database file path.
 
 **Example:**
 ```bash
 make ev -- report --project=mymodule
+make ev -- report --run=7
 make ev -- report --project=mymodule --format=json
 ```
 
@@ -261,6 +268,8 @@ Indexed versions: 2
 Total symbols:    57081
 Total changes:    142
 Projects scanned: 1
+Scan runs:        3
+Jobs:             3 (1 active)
 Code matches:     12
 ```
 
@@ -303,6 +312,128 @@ Match #2:
 
 ---
 
+## `make yaml-search`
+
+Helper around `scripts/semantic-yaml-search.php` for searching indexed YAML symbols by semantic fields already stored in SQLite.
+
+Use it for:
+- service ids from `*.services.yml`
+- extension metadata from `*.info.yml`
+- route refs from `*.links.*.yml`
+- install/module references from `recipe.yml`
+- exported config dependencies from `db/config/*.yml`
+
+```bash
+make yaml-search SEARCH_TAG=<version> SEARCH_TERM=<term> [SEARCH_TYPES=type1,type2] [SEARCH_DB=<path>] [SEARCH_LIMIT=50]
+```
+
+**Variables:**
+- `SEARCH_TAG` — Indexed version tag to search. Defaults to `INDEX_TAG`.
+- `SEARCH_TERM` — Required search term.
+- `SEARCH_TYPES` — Optional comma-separated symbol types such as `service,module_info,theme_info`.
+- `SEARCH_DB` — Optional SQLite path. Defaults to `.data/evolver.sqlite`.
+- `SEARCH_LIMIT` — Result limit. Defaults to `50`.
+
+**Examples:**
+```bash
+# Find a specific service id
+make yaml-search SEARCH_TAG=11.0.0 SEARCH_TYPES=service SEARCH_TERM=block.repository
+
+# Find a service by implementation class
+make yaml-search SEARCH_TAG=11.0.0 SEARCH_TYPES=service SEARCH_TERM='Drupal\block\BlockRepository'
+
+# Find module info files that mention block as a dependency or extension reference
+make yaml-search SEARCH_TAG=11.0.0 SEARCH_TYPES=module_info,theme_info SEARCH_TERM=block
+
+# Find links that reference a Drupal route
+make yaml-search SEARCH_TAG=11.0.0 SEARCH_TYPES=link_task,link_contextual SEARCH_TERM=entity.block.edit_form
+
+# Find recipe manifests that install views_ui
+make yaml-search SEARCH_TAG=11.0.0 SEARCH_TYPES=recipe_manifest SEARCH_TERM=views_ui
+```
+
+**`jq` examples:**
+```bash
+# Show just symbol type, id, and file path
+make yaml-search SEARCH_TAG=11.0.0 SEARCH_TYPES=service SEARCH_TERM=block.repository | jq '.results[] | {symbol_type, fqn, file_path}'
+
+# Show module info matches with dependency targets
+make yaml-search SEARCH_TAG=11.0.0 SEARCH_TYPES=module_info SEARCH_TERM=block | jq '.results[] | {fqn, file_path, dependency_targets: .metadata.dependency_targets}'
+```
+
+**Output:**
+```json
+{
+  "tag": "11.0.0",
+  "term": "block.repository",
+  "types": ["service"],
+  "count": 1,
+  "results": [
+    {
+      "symbol_type": "service",
+      "fqn": "block.repository",
+      "file_path": "block.services.yml",
+      "resolved_class_fqn": "Drupal\\block\\BlockRepository",
+      "resolved_class_file_path": "src/BlockRepository.php",
+      "signature": {
+        "arguments": "@entity_type.manager",
+        "class": "Drupal\\block\\BlockRepository",
+        "tags": null
+      },
+      "metadata": null
+    }
+  ]
+}
+```
+
+---
+
+## `evolver serve`
+
+Serve the local Amp/Twig web UI.
+
+```
+evolver serve [--host=<host>] [--port=<port>] [--db=<path>]
+```
+
+**Options:**
+- `--host` — Bind host. Default: `0.0.0.0`
+- `--port` — Bind port. Default: `8080`
+- `--db` — Database file path.
+
+**Example:**
+```bash
+make web
+```
+
+The UI is intended for managed branch-based scans. It lets you register Git-backed projects, save branches, queue scan jobs, inspect run history, and compare two runs for the same project.
+It also exposes the indexed knowledge base under `Versions -> Symbols`: each symbol row links to a symbol detail page, and service/class pairs show semantic links between YAML service ids and PHP implementation classes when both were indexed.
+
+---
+
+## `evolver queue:work`
+
+Process persisted scan jobs.
+
+```
+evolver queue:work [--once] [--sleep=<seconds>] [--db=<path>]
+```
+
+**Options:**
+- `--once` — Process at most one queued job and exit.
+- `--sleep` — Idle sleep interval between polls. Default: `1`
+- `--db` — Database file path.
+
+**Example:**
+```bash
+make worker
+make ev -- queue:work --once
+```
+
+The worker performs Git materialization, branch checkout, source version detection, project scanning, and run completion bookkeeping. The web server does not execute scans in-request.
+
+---
+
 ## Typical Workflow
 
 ```bash
@@ -319,7 +450,7 @@ evolver scan /path/to/mymodule --target=10.3.0
 # 4. Review what was found
 evolver report --project=mymodule
 
-# 5. Preview fixes
+# 5. Preview fixes for the latest run
 evolver apply --project=mymodule --dry-run
 
 # 6. Apply fixes interactively

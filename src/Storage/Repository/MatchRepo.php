@@ -7,10 +7,10 @@ namespace DrupalEvolver\Storage\Repository;
 use DrupalEvolver\Storage\Database;
 use DrupalEvolver\Storage\DatabaseApi;
 
-class MatchRepo
+final class MatchRepo
 {
     private const CREATE_BATCH_SIZE = 75;
-    private const IDENTITY_FIELDS = ['project_id', 'change_id', 'file_path', 'byte_start', 'byte_end'];
+    private const IDENTITY_FIELDS = ['scope_key', 'change_id', 'file_path', 'byte_start', 'byte_end'];
 
     public function __construct(private Database $db, private ?DatabaseApi $api = null) {}
 
@@ -18,15 +18,15 @@ class MatchRepo
     public function save(array $data): int
     {
         $fields = [
-            'project_id', 'change_id', 'file_path', 'line_start', 'line_end',
-            'byte_start', 'byte_end',
+            'project_id', 'scan_run_id', 'scope_key', 'change_id', 'file_path',
+            'line_start', 'line_end', 'byte_start', 'byte_end',
             'matched_source', 'suggested_fix', 'fix_method', 'status',
         ];
 
         $data = $this->normalizeIdentityFields($data);
-        $present = array_intersect($fields, array_keys($data));
+        $present = array_values(array_intersect($fields, array_keys($data)));
         $cols = implode(', ', $present);
-        $placeholders = implode(', ', array_map(fn($f) => ':' . $f, $present));
+        $placeholders = implode(', ', array_map(static fn(string $field): string => ':' . $field, $present));
         $params = array_intersect_key($data, array_flip($present));
         $sql = "INSERT INTO code_matches ({$cols}) VALUES ({$placeholders})";
 
@@ -40,10 +40,10 @@ class MatchRepo
         }
 
         if ($assignments !== []) {
-            $sql .= ' ON CONFLICT(project_id, change_id, file_path, byte_start, byte_end) DO UPDATE SET '
+            $sql .= ' ON CONFLICT(scope_key, change_id, file_path, byte_start, byte_end) DO UPDATE SET '
                 . implode(', ', $assignments);
         } else {
-            $sql .= ' ON CONFLICT(project_id, change_id, file_path, byte_start, byte_end) DO NOTHING';
+            $sql .= ' ON CONFLICT(scope_key, change_id, file_path, byte_start, byte_end) DO NOTHING';
         }
 
         $stmt = $this->prepareStatement('match_repo.save.' . implode(',', $present), $sql);
@@ -66,19 +66,20 @@ class MatchRepo
     #[\NoDiscard]
     public function saveBatch(array $matches): int
     {
-        if (empty($matches)) {
+        if ($matches === []) {
             return 0;
         }
 
         $fields = [
-            'project_id', 'change_id', 'file_path', 'line_start', 'line_end',
-            'byte_start', 'byte_end',
+            'project_id', 'scan_run_id', 'scope_key', 'change_id', 'file_path',
+            'line_start', 'line_end', 'byte_start', 'byte_end',
             'matched_source', 'suggested_fix', 'fix_method', 'status',
         ];
-
         $cols = implode(', ', $fields);
         $placeholders = '(' . implode(', ', array_fill(0, count($fields), '?')) . ')';
         $updateAssignments = [
+            'project_id = excluded.project_id',
+            'scan_run_id = excluded.scan_run_id',
             'line_start = excluded.line_start',
             'line_end = excluded.line_end',
             'matched_source = excluded.matched_source',
@@ -96,13 +97,14 @@ class MatchRepo
             foreach ($chunk as $match) {
                 $match = $this->normalizeIdentityFields($match);
                 $values[] = $placeholders;
+
                 foreach ($fields as $field) {
                     $params[] = $match[$field] ?? null;
                 }
             }
 
             $sql .= implode(', ', $values)
-                . ' ON CONFLICT(project_id, change_id, file_path, byte_start, byte_end) DO UPDATE SET '
+                . ' ON CONFLICT(scope_key, change_id, file_path, byte_start, byte_end) DO UPDATE SET '
                 . implode(', ', $updateAssignments);
             $affectedRows += $this->db->execute($sql, $params);
         }
@@ -120,17 +122,37 @@ class MatchRepo
     public function findByProject(int $projectId): array
     {
         return $this->db->query(
-            'SELECT * FROM code_matches WHERE project_id = :pid',
-            ['pid' => $projectId]
+            'SELECT * FROM code_matches WHERE project_id = :project_id ORDER BY id',
+            ['project_id' => $projectId]
         )->fetchAll();
     }
 
     #[\NoDiscard]
-    public function findPending(int $projectId): array
+    public function findByRun(int $scanRunId): array
     {
         return $this->db->query(
-            "SELECT * FROM code_matches WHERE project_id = :pid AND status = 'pending'",
-            ['pid' => $projectId]
+            'SELECT * FROM code_matches WHERE scan_run_id = :scan_run_id ORDER BY file_path, line_start, id',
+            ['scan_run_id' => $scanRunId]
+        )->fetchAll();
+    }
+
+    #[\NoDiscard]
+    public function findPending(int $projectId, ?int $scanRunId = null): array
+    {
+        if ($scanRunId !== null) {
+            return $this->db->query(
+                "SELECT * FROM code_matches
+                 WHERE scan_run_id = :scan_run_id AND status = 'pending'
+                 ORDER BY file_path, line_start, id",
+                ['scan_run_id' => $scanRunId]
+            )->fetchAll();
+        }
+
+        return $this->db->query(
+            "SELECT * FROM code_matches
+             WHERE project_id = :project_id AND status = 'pending'
+             ORDER BY file_path, line_start, id",
+            ['project_id' => $projectId]
         )->fetchAll();
     }
 
@@ -146,8 +168,23 @@ class MatchRepo
     public function countByProject(int $projectId): array
     {
         return $this->db->query(
-            "SELECT status, COUNT(*) as cnt FROM code_matches WHERE project_id = :pid GROUP BY status",
-            ['pid' => $projectId]
+            "SELECT status, COUNT(*) AS cnt
+             FROM code_matches
+             WHERE project_id = :project_id
+             GROUP BY status",
+            ['project_id' => $projectId]
+        )->fetchAll();
+    }
+
+    #[\NoDiscard]
+    public function countByRun(int $scanRunId): array
+    {
+        return $this->db->query(
+            "SELECT status, COUNT(*) AS cnt
+             FROM code_matches
+             WHERE scan_run_id = :scan_run_id
+             GROUP BY status",
+            ['scan_run_id' => $scanRunId]
         )->fetchAll();
     }
 
@@ -155,19 +192,29 @@ class MatchRepo
     public function getTotalCountByProject(int $projectId): int
     {
         $row = $this->db->query(
-            "SELECT COUNT(*) as total FROM code_matches WHERE project_id = :pid",
-            ['pid' => $projectId]
+            'SELECT COUNT(*) AS total FROM code_matches WHERE project_id = :project_id',
+            ['project_id' => $projectId]
         )->fetch();
 
         return (int) ($row['total'] ?? 0);
     }
 
     #[\NoDiscard]
+    public function getTotalCountByRun(int $scanRunId): int
+    {
+        $row = $this->db->query(
+            'SELECT COUNT(*) AS total FROM code_matches WHERE scan_run_id = :scan_run_id',
+            ['scan_run_id' => $scanRunId]
+        )->fetch();
+
+        return (int) ($row['total'] ?? 0);
+    }
+
     public function deleteByProject(int $projectId): int
     {
         return $this->db->execute(
-            'DELETE FROM code_matches WHERE project_id = :pid',
-            ['pid' => $projectId]
+            'DELETE FROM code_matches WHERE project_id = :project_id',
+            ['project_id' => $projectId]
         );
     }
 
@@ -183,7 +230,7 @@ class MatchRepo
         $row = $this->db->query(
             'SELECT id
              FROM code_matches
-             WHERE project_id = :project_id
+             WHERE scope_key = :scope_key
                AND change_id = :change_id
                AND file_path = :file_path
                AND byte_start = :byte_start
@@ -191,7 +238,7 @@ class MatchRepo
              ORDER BY id DESC
              LIMIT 1',
             [
-                'project_id' => $data['project_id'] ?? null,
+                'scope_key' => $data['scope_key'] ?? null,
                 'change_id' => $data['change_id'] ?? null,
                 'file_path' => $data['file_path'] ?? null,
                 'byte_start' => $data['byte_start'] ?? null,
@@ -208,6 +255,31 @@ class MatchRepo
             if (!array_key_exists($field, $data) || $data[$field] === null) {
                 $data[$field] = -1;
             }
+        }
+
+        $scanRunId = isset($data['scan_run_id']) && $data['scan_run_id'] !== null ? (int) $data['scan_run_id'] : null;
+        $projectId = isset($data['project_id']) ? (int) $data['project_id'] : null;
+
+        if ($scanRunId !== null) {
+            if ($projectId === null) {
+                $row = $this->db->query(
+                    'SELECT project_id FROM scan_runs WHERE id = :scan_run_id',
+                    ['scan_run_id' => $scanRunId]
+                )->fetch();
+                if (!$row || !isset($row['project_id'])) {
+                    throw new \InvalidArgumentException(sprintf('Unknown scan run id: %d', $scanRunId));
+                }
+                $projectId = (int) $row['project_id'];
+            }
+
+            $data['project_id'] = $projectId;
+            $data['scan_run_id'] = $scanRunId;
+            $data['scope_key'] = 'run:' . $scanRunId;
+        } elseif ($projectId !== null) {
+            $data['project_id'] = $projectId;
+            $data['scope_key'] = 'project:' . $projectId;
+        } else {
+            throw new \InvalidArgumentException('Matches require either scan_run_id or project_id.');
         }
 
         return $data;

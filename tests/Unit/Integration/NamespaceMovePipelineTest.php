@@ -102,7 +102,8 @@ PHP);
                 $api,
                 new MatchCollector($binding, new LanguageRegistry()),
             );
-            $scanner->scan($projectDir, '10.3.0', '10.2.0');
+            $scanRunId = $scanner->scan($projectDir, '10.3.0', '10.2.0');
+            $this->assertGreaterThan(0, $scanRunId);
 
             $project = $api->projects()->findByPath($projectDir);
             $this->assertNotNull($project);
@@ -117,7 +118,7 @@ PHP);
             $this->assertNotEmpty($templatePending);
 
             $applier = new TemplateApplier($api);
-            $stats = $applier->applyWithStats($projectId, $projectDir, false, false);
+            $stats = $applier->applyWithStats($projectId, $projectDir, $scanRunId, false, false);
 
             $this->assertGreaterThanOrEqual(1, $stats['applied']);
 

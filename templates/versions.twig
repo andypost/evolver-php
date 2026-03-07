@@ -1,0 +1,166 @@
+{% extends "layout.twig" %}
+
+{% block content %}
+    <section class="hero hero-compact">
+        <div>
+            <p class="eyebrow">Core Knowledge Base</p>
+            <h1>Indexed Versions</h1>
+        </div>
+    </section>
+
+    <section class="grid two-up">
+        <article class="panel">
+            <div class="panel-head">
+                <h2>Index Drupal Core</h2>
+            </div>
+            <form class="form" action="/versions/index" method="post">
+                <label>
+                    <span>Path to Drupal core checkout</span>
+                    <input type="text" name="path" placeholder="/mnt/project/core" required>
+                </label>
+                <label>
+                    <span>Version tag</span>
+                    <input type="text" name="tag" placeholder="11.0.0" required>
+                </label>
+                <label>
+                    <span>Workers</span>
+                    <input type="number" name="workers" value="4" min="1" max="16">
+                </label>
+                <button class="button button-primary" type="submit">Index</button>
+            </form>
+        </article>
+
+        <article class="panel">
+            <div class="panel-head">
+                <h2>Diff Versions</h2>
+            </div>
+            {% if versions|length >= 2 %}
+                <form class="form" action="/versions/diff" method="post">
+                    <label>
+                        <span>From version</span>
+                        <select name="from" required>
+                            {% for version in versions %}
+                                <option value="{{ version.tag }}">{{ version.tag }} ({{ version.symbol_count ?? 0 }} symbols)</option>
+                            {% endfor %}
+                        </select>
+                    </label>
+                    <label>
+                        <span>To version</span>
+                        <select name="to" required>
+                            {% for version in versions %}
+                                <option value="{{ version.tag }}"{% if loop.last %} selected{% endif %}>{{ version.tag }} ({{ version.symbol_count ?? 0 }} symbols)</option>
+                            {% endfor %}
+                        </select>
+                    </label>
+                    <label>
+                        <span>Workers</span>
+                        <input type="number" name="workers" value="4" min="1" max="16">
+                    </label>
+                    <button class="button button-primary" type="submit">Diff</button>
+                </form>
+            {% else %}
+                <p class="empty">Index at least two versions to enable diffing.</p>
+            {% endif %}
+        </article>
+    </section>
+
+    <section class="panel">
+        <div class="panel-head">
+            <h2>Versions</h2>
+            <span class="count">{{ versions|length }}</span>
+        </div>
+        {% if versions %}
+            <table class="table">
+                <thead>
+                <tr>
+                    <th>Tag</th>
+                    <th>Version</th>
+                    <th>Files</th>
+                    <th>Symbols</th>
+                    <th>Indexed</th>
+                </tr>
+                </thead>
+                <tbody>
+                {% for version in versions %}
+                    <tr>
+                        <td><a href="/versions/{{ version.id }}"><strong>{{ version.tag }}</strong></a></td>
+                        <td>{{ version.major }}.{{ version.minor }}.{{ version.patch }}</td>
+                        <td>{{ version.file_count ?? 0 }}</td>
+                        <td><a href="/versions/{{ version.id }}/symbols">{{ version.symbol_count ?? 0 }}</a></td>
+                        <td>{{ version.indexed_at }}</td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        {% else %}
+            <p class="empty">No versions indexed yet. Use the form above to index a Drupal core checkout.</p>
+        {% endif %}
+    </section>
+
+    {% if changes_summary %}
+        <section class="panel">
+            <div class="panel-head">
+                <h2>Stored Change Diffs</h2>
+            </div>
+            <table class="table">
+                <thead>
+                <tr>
+                    <th>From</th>
+                    <th>To</th>
+                    <th class="text-right">Breaking</th>
+                    <th class="text-right">Deprecations</th>
+                    <th class="text-right">Total</th>
+                    <th>Action</th>
+                </tr>
+                </thead>
+                <tbody>
+                {% for diff in changes_summary %}
+                    <tr>
+                        <td>{{ diff.from_tag }}</td>
+                        <td>{{ diff.to_tag }}</td>
+                        <td class="text-right">
+                            {% if diff.breaking_count > 0 %}
+                                <span class="severity-breaking">{{ diff.breaking_count }}</span>
+                            {% else %}
+                                0
+                            {% endif %}
+                        </td>
+                        <td class="text-right">
+                            {% if diff.deprecation_count > 0 %}
+                                <span class="severity-deprecation">{{ diff.deprecation_count }}</span>
+                            {% else %}
+                                0
+                            {% endif %}
+                        </td>
+                        <td class="text-right"><strong>{{ diff.change_count }}</strong></td>
+                        <td>
+                            <a href="/versions/diff/{{ diff.from_tag }}/{{ diff.to_tag }}" class="button button-small">View Details</a>
+                        </td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </section>
+    {% endif %}
+
+    {% if active_jobs %}
+        <section class="panel">
+            <div class="panel-head">
+                <h2>Active Jobs</h2>
+            </div>
+            <ul class="job-list">
+                {% for job in active_jobs %}
+                    <li>
+                        <span>Job #{{ job.id }}</span>
+                        <span>{{ job.kind }}</span>
+                        <strong>{{ job.status }}</strong>
+                        {% if job.progress_total > 0 %}
+                            <progress value="{{ job.progress_current }}" max="{{ job.progress_total }}"></progress>
+                            <span class="muted">{{ job.progress_label }}</span>
+                        {% endif %}
+                    </li>
+                {% endfor %}
+            </ul>
+        </section>
+    {% endif %}
+{% endblock %}

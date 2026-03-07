@@ -48,7 +48,7 @@ To handle millions of potential matches without exhausting RAM:
 - **Composite Indexing:** A specialized composite index `idx_sym_lookup(version_id, fqn, symbol_type)` provides a 73% speedup for diffing operations.
 - **Prepared Statement Cache:** `DatabaseApi` reuses prepared statements for the hottest repository paths to reduce parse overhead on repeated writes and diff queries.
 - **Batched Writes:** `MatchRepo` and `ChangeRepo` chunk large inserts so scans and diffs avoid SQLite variable limits.
-- **Deduplication:** `code_matches` uses a unique identity on `(project_id, change_id, file_path, byte_start, byte_end)` with normalized `-1` byte offsets for offsetless matches.
+- **Deduplication:** `code_matches` uses a unique identity on `(scope_key, change_id, file_path, byte_start, byte_end)` with normalized `-1` byte offsets for offsetless matches, so both legacy project scans and persisted `scan_run` history remain idempotent.
 
 ## Layer Responsibilities
 
@@ -74,10 +74,10 @@ SQLite persistence with WAL mode, foreign keys, and parameterized queries.
 | Class | Responsibility |
 |-------|---------------|
 | `Database` | PDO wrapper. Sets WAL mode, foreign keys, busy timeout. Provides `query()`, `execute()`, `transaction()`, `lastInsertId()`. |
-| `Schema` | Creates and forward-migrates all 8 tables and indexes with `IF NOT EXISTS`. Idempotent. Stores schema version in `schema_meta`. |
+| `Schema` | Creates and forward-migrates all current tables and indexes with `IF NOT EXISTS`. Idempotent. Stores schema version in `schema_meta`. |
 | `Repository/*` | Data access objects. One per table. Accept/return arrays (no DTOs in MVP). Hot-path tables expose `save()` for UPSERT semantics and `create()` as a BC alias. |
 
-**Schema overview (8 tables):**
+**Schema overview (selected tables):**
 
 ```
 versions ──< parsed_files ──< symbols
@@ -86,7 +86,13 @@ changes ────────────────────────
    │                             │
    └── from_version_id, to_version_id → versions
 
-projects ──< code_matches ──── changes
+projects ──< project_branches
+   │
+   ├──< scan_runs ──< code_matches ──── changes
+   │          │
+   │          └────── job_id → jobs ──< job_logs
+   │
+   └──< code_matches (legacy project-scoped CLI scans)
 ```
 
 ### Indexer Layer (`src/Indexer/`)
@@ -200,9 +206,22 @@ Scans target projects against stored changes.
 
 | Class | Responsibility |
 |-------|---------------|
-| `ProjectScanner` | Walks project files, parses with tree-sitter, runs change queries, stores matches. Skips `vendor/` and `node_modules/`. Projects are keyed by path and each re-scan replaces prior matches for that project. |
+| `ProjectScanner` | Walks project files, parses with tree-sitter, runs change queries, and stores matches. Skips `vendor/` and `node_modules/`. CLI scans create `scan_runs`, and matches are now recorded per run so history is preserved. |
 | `VersionDetector` | Reads `composer.lock` to find `drupal/core` version. |
 | `MatchCollector` | Runs each change's `ts_query` against a parsed tree. Returns match locations and source text. Includes signature-change post-processing (argument-count heuristic) to reduce noise. |
+
+### Web and Queue Layer (`src/Web/`, `src/Project/`, `src/Queue/`)
+
+Provides the local control plane for managed branch scans.
+
+| Class | Responsibility |
+|-------|---------------|
+| `WebServer` | Amp HTTP server with Twig-rendered pages and SSE endpoints for live job updates. |
+| `ManagedProjectService` | Registers managed Git projects and persists tracked branches. |
+| `GitProjectManager` | Materializes a project branch as a local path or refreshed git worktree. |
+| `JobQueue` | Persists queue jobs, progress, and log events in SQLite. |
+| `ScanRunService` | Queues branch scans, resolves source trees, executes scans, and finalizes run/job state. |
+| `RunComparisonService` | Compares two completed runs for the same project and upgrade path. |
 
 ### Applier Layer (`src/Applier/`)
 

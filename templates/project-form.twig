@@ -1,0 +1,59 @@
+{% extends "layout.twig" %}
+
+{% block content %}
+    <section class="panel panel-form">
+        <div class="panel-head">
+            <h1>Register Project</h1>
+        </div>
+
+        <form class="form" action="/projects" method="post">
+            <label>
+                <span>Name</span>
+                <input type="text" name="name" placeholder="my-custom-module" required>
+            </label>
+
+            <label>
+                <span>Source</span>
+                <select name="source_type" id="source-type">
+                    <option value="git_remote">Remote Git URL</option>
+                    <option value="local_path">Local path (inside container)</option>
+                </select>
+            </label>
+
+            <label data-field="remote">
+                <span>Remote URL</span>
+                <input type="url" name="remote_url" placeholder="https://github.com/acme/module.git">
+            </label>
+
+            <label data-field="local">
+                <span>Local path</span>
+                <input type="text" name="path" placeholder="/app/drupalmoduleupgrader">
+            </label>
+
+            <label>
+                <span>Default branch</span>
+                <input type="text" name="default_branch" value="main">
+            </label>
+
+            <label>
+                <span>Project type</span>
+                <input type="text" name="type" value="module">
+            </label>
+
+            <button class="button button-primary" type="submit">Register project</button>
+        </form>
+    </section>
+
+    <script>
+    (function() {
+        var sel = document.getElementById('source-type');
+        function toggle() {
+            var v = sel.value;
+            document.querySelectorAll('[data-field="remote"]').forEach(function(el) { el.style.display = v === 'git_remote' ? '' : 'none'; });
+            document.querySelectorAll('[data-field="local"]').forEach(function(el) { el.style.display = v === 'local_path' ? '' : 'none'; });
+        }
+        sel.addEventListener('change', toggle);
+        toggle();
+    })();
+    </script>
+{% endblock %}

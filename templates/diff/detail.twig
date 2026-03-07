@@ -1,0 +1,80 @@
+{% extends "layout.twig" %}
+
+{% block content %}
+    <nav class="breadcrumb">
+        <a href="/versions">Versions</a> &raquo; <span>{{ from.tag }} to {{ to.tag }}</span>
+    </nav>
+
+    <section class="hero hero-compact">
+        <div>
+            <p class="eyebrow">Change Analysis</p>
+            <h1>{{ from.tag }} &rarr; {{ to.tag }}</h1>
+        </div>
+    </section>
+
+    <section class="panel">
+        <div class="panel-head">
+            <h2>Changes</h2>
+            <span class="count">{{ changes|length }}</span>
+        </div>
+        {% if changes %}
+            <div class="table-wrapper">
+                <table class="table">
+                    <thead>
+                    <tr>
+                        <th>Change</th>
+                        <th>Severity</th>
+                        <th>Type</th>
+                        <th>FQN</th>
+                    </tr>
+                    </thead>
+                    <tbody>
+                    {% for change in changes %}
+                        <tr>
+                            <td>
+                                <span class="change-tag change-{{ change.change_type }}">
+                                    {{ change.change_type|replace({'_': ' '})|title }}
+                                </span>
+                            </td>
+                            <td>
+                                <span class="severity-badge severity-{{ change.severity }}">
+                                    {{ change.severity|title }}
+                                </span>
+                            </td>
+                            <td>
+                                <div class="symbol-type-info">
+                                    <span class="badge">{{ change.language|upper }}</span>
+                                    <span class="muted small">{{ (change.new_symbol.symbol_type ?: change.old_symbol.symbol_type)|replace({'_': ' '})|title }}</span>
+                                </div>
+                            </td>
+                            <td>
+                                <div class="fqn-cell">
+                                    {% if change.old_fqn and change.new_fqn and change.old_fqn != change.new_fqn %}
+                                        <div class="diff-fqn">
+                                            <del class="old-fqn">{{ change.old_fqn }}</del>
+                                            <ins class="new-fqn">{{ change.new_fqn }}</ins>
+                                        </div>
+                                    {% else %}
+                                        <strong>{{ change.old_fqn ?: change.new_fqn }}</strong>
+                                    {% endif %}
+                                    
+                                    <div class="path-info">
+                                        {% set symbol = change.new_symbol ?: change.old_symbol %}
+                                        {% if symbol %}
+                                            <code class="path">{{ symbol.file_path }}</code>
+                                            <span class="muted small">L{{ symbol.line_start }}</span>
+                                        {% endif %}
+                                    </div>
+                                </div>
+                            </td>
+                        </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        {% else %}
+            <p class="empty">No changes found between these versions.</p>
+        {% endif %}
+    </section>
+
+{% endblock %}

@@ -20,6 +20,7 @@ class ReportCommand extends Command
     {
         $this
             ->addOption('project', 'p', InputOption::VALUE_REQUIRED, 'Project name')
+            ->addOption('run', 'r', InputOption::VALUE_REQUIRED, 'Scan run id')
             ->addOption('format', 'f', InputOption::VALUE_OPTIONAL, 'Output format (table|json)', 'table')
             ->addOption('db', null, InputOption::VALUE_OPTIONAL, 'Database file path', Database::defaultPath());
     }
@@ -27,27 +28,58 @@ class ReportCommand extends Command
     protected function execute(InputInterface $input, OutputInterface $output): int
     {
         $projectName = $input->getOption('project');
+        $runId = $input->getOption('run');
         $format = $input->getOption('format');
         $dbPath = $input->getOption('db');
 
-        if (!$projectName) {
-            $output->writeln('<error>--project is required</error>');
+        if (!$projectName && !$runId) {
+            $output->writeln('<error>Either --project or --run is required</error>');
             return Command::FAILURE;
         }
 
         $api = new DatabaseApi($dbPath);
+        $project = null;
+        $scanRun = null;
 
-        $project = $api->projects()->findByName($projectName);
-        if (!$project) {
-            $output->writeln("<error>Project not found: {$projectName}</error>");
-            return Command::FAILURE;
+        if ($runId !== null) {
+            $scanRun = $api->scanRuns()->findById((int) $runId);
+            if ($scanRun === null) {
+                $output->writeln(sprintf('<error>Scan run not found: %s</error>', (string) $runId));
+                return Command::FAILURE;
+            }
+
+            $project = $api->projects()->findById((int) $scanRun['project_id']);
+            $matches = $api->findMatchesWithChangesForRun((int) $scanRun['id']);
+        } else {
+            $project = $api->projects()->findByName((string) $projectName);
+            if (!$project) {
+                $output->writeln("<error>Project not found: {$projectName}</error>");
+                return Command::FAILURE;
+            }
+
+            $scanRun = $api->scanRuns()->findLatestByProject((int) $project['id'], 'completed');
+            $matches = $scanRun !== null
+                ? $api->findMatchesWithChangesForRun((int) $scanRun['id'])
+                : $api->findMatchesWithChanges((int) $project['id']);
         }
-
-        $matches = $api->findMatchesWithChanges((int) $project['id']);
 
         if ($format === 'json') {
             $output->writeln(json_encode($matches, JSON_PRETTY_PRINT));
             return Command::SUCCESS;
+        }
+
+        if ($project !== null) {
+            $output->writeln(sprintf('Project: <info>%s</info>', (string) $project['name']));
+        }
+        if ($scanRun !== null) {
+            $output->writeln(sprintf(
+                'Run: <info>%d</info> (%s -> %s, %s)',
+                (int) $scanRun['id'],
+                (string) ($scanRun['from_core_version'] ?? 'unknown'),
+                (string) ($scanRun['target_core_version'] ?? 'unknown'),
+                (string) ($scanRun['status'] ?? 'unknown')
+            ));
+            $output->writeln('');
         }
 
         // Table format

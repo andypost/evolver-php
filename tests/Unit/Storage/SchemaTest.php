@@ -22,8 +22,9 @@ class SchemaTest extends TestCase
         )->fetchAll(\PDO::FETCH_COLUMN);
 
         $expected = [
-            'ast_snapshots', 'changes', 'code_matches', 'parsed_files',
-            'projects', 'schema_meta', 'symbols', 'versions',
+            'ast_snapshots', 'changes', 'code_matches', 'job_logs',
+            'jobs', 'parsed_files', 'project_branches', 'projects',
+            'scan_runs', 'schema_meta', 'symbols', 'versions',
         ];
 
         $this->assertSame($expected, $tables);
@@ -35,7 +36,7 @@ class SchemaTest extends TestCase
         (new Schema($db))->createAll();
 
         $version = $db->query("SELECT value FROM schema_meta WHERE key = 'schema_version'")->fetch();
-        $this->assertSame('2', $version['value']);
+        $this->assertSame('3', $version['value']);
     }
 
     public function testIdempotent(): void
@@ -63,6 +64,18 @@ class SchemaTest extends TestCase
         $this->assertSame('-1', (string) $byteStartMeta['dflt_value']);
         $this->assertSame(1, (int) $byteEndMeta['notnull']);
         $this->assertSame('-1', (string) $byteEndMeta['dflt_value']);
+    }
+
+    public function testCodeMatchesHasRunScopedColumns(): void
+    {
+        $db = new Database(':memory:');
+        (new Schema($db))->createAll();
+
+        $columns = $db->query("PRAGMA table_info(code_matches)")->fetchAll();
+        $names = array_column($columns, 'name');
+
+        $this->assertContains('scan_run_id', $names);
+        $this->assertContains('scope_key', $names);
     }
 
     public function testVersionsTableHasWeightColumn(): void

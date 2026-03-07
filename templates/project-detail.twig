@@ -1,0 +1,118 @@
+{% extends "layout.twig" %}
+
+{% block content %}
+    <section class="hero hero-compact">
+        <div>
+            <p class="eyebrow">Project</p>
+            <h1>{{ project.name }}</h1>
+            <p class="muted">{{ project.remote_url ?: project.path }}</p>
+        </div>
+        <a class="button" href="/projects/{{ project.id }}/compare">Compare scan runs</a>
+    </section>
+
+    <section class="grid two-up">
+        <article class="panel">
+            <div class="panel-head">
+                <h2>Branches</h2>
+            </div>
+            {% if branches %}
+                <ul class="branch-list">
+                    {% for branch in branches %}
+                        <li>
+                            <span>
+                                <strong>{{ branch.branch_name }}</strong>
+                                {% if branch.is_default %}<span class="pill">default</span>{% endif %}
+                            </span>
+                            <span class="muted">{{ branch.last_commit_sha ?: 'not fetched yet' }}</span>
+                        </li>
+                    {% endfor %}
+                </ul>
+            {% else %}
+                <p class="empty">No branches saved yet.</p>
+            {% endif %}
+
+            <form class="form form-inline" action="/projects/{{ project.id }}/branches" method="post">
+                <label>
+                    <span>New branch</span>
+                    <input type="text" name="branch_name" placeholder="11.x" required>
+                </label>
+                <label class="checkbox">
+                    <input type="checkbox" name="is_default" value="1">
+                    <span>Default</span>
+                </label>
+                <button class="button" type="submit">Add branch</button>
+            </form>
+        </article>
+
+        <article class="panel">
+            <div class="panel-head">
+                <h2>Queue Scan</h2>
+            </div>
+            <form class="form" action="/projects/{{ project.id }}/runs" method="post">
+                <label>
+                    <span>Branch</span>
+                    <select name="branch_name" required>
+                        {% for branch in branches %}
+                            <option value="{{ branch.branch_name }}" {% if branch.is_default %}selected{% endif %}>{{ branch.branch_name }}</option>
+                        {% endfor %}
+                    </select>
+                </label>
+
+                <label>
+                    <span>Target core version</span>
+                    <select name="target_core_version" required>
+                        {% for version in versions %}
+                            <option value="{{ version.tag }}">{{ version.tag }}</option>
+                        {% endfor %}
+                    </select>
+                </label>
+
+                <label>
+                    <span>Source core version override</span>
+                    <input type="text" name="from_core_version" placeholder="auto-detect from composer.lock">
+                </label>
+
+                <label>
+                    <span>Workers</span>
+                    <input type="number" name="workers" value="1" min="1" max="16">
+                </label>
+
+                <button class="button button-primary" type="submit">Queue scan</button>
+            </form>
+        </article>
+    </section>
+
+    <section class="panel">
+        <div class="panel-head">
+            <h2>Recent Runs</h2>
+        </div>
+        {% if runs %}
+            <table class="table">
+                <thead>
+                <tr>
+                    <th>Run</th>
+                    <th>Branch</th>
+                    <th>Upgrade path</th>
+                    <th>Status</th>
+                    <th>Matches</th>
+                    <th>Created</th>
+                </tr>
+                </thead>
+                <tbody>
+                {% for run in runs %}
+                    <tr>
+                        <td><a href="/runs/{{ run.id }}">#{{ run.id }}</a></td>
+                        <td>{{ run.branch_name }}</td>
+                        <td>{{ run.from_core_version ?: 'auto' }} → {{ run.target_core_version }}</td>
+                        <td>{{ run.status }}</td>
+                        <td>{{ run.match_count }}</td>
+                        <td>{{ run.created_at }}</td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        {% else %}
+            <p class="empty">No runs recorded yet.</p>
+        {% endif %}
+    </section>
+{% endblock %}

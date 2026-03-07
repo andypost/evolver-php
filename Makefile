@@ -1,5 +1,5 @@
 # Makefile for Evolver
-# Manages a long-running compose service with hot caches (JIT, FFI Preload)
+# Manages long-running compose services with hot caches (JIT, FFI Preload)
 
 COMPOSE ?= docker compose
 SERVICE_NAME = evolver
@@ -9,39 +9,28 @@ DOCKER_COMPOSE_RUN_FLAGS ?= $(shell if [ -t 0 ] && [ -t 1 ]; then echo "--rm"; e
 # Defaults
 PHP_BIN = php85
 WORKERS ?= 4
-INDEX_PATH ?= /mnt/project/core/modules/user
+WEB_HOST ?= 0.0.0.0
+WEB_PORT ?= 8080
+QUEUE_SLEEP ?= 2
+INDEX_PATH ?= /mnt/drupal/core/modules/user
 INDEX_TAG ?= 11.0.0
-SCAN_PATH ?= /mnt/project
-SCAN_TARGET ?= 11.0.0
 EXTRA_HOST_PATH ?=
 EXTRA_CONTAINER_PATH ?= /mnt/project
 EXTRA_MOUNT_ARG := $(if $(strip $(EXTRA_HOST_PATH)),--volume $(abspath $(EXTRA_HOST_PATH)):$(EXTRA_CONTAINER_PATH):ro,)
 
-# Profiling paths
-PROFILE_ROOT = .data/profiles
-MEMPROF_SO = /usr/lib/php85/modules/memprof.so
-MEMINFO_SO = /usr/lib/php85/modules/meminfo.so
-XHPROF_SO = /usr/lib/php85/modules/xhprof.so
-SPX_SO = /usr/lib/php85/modules/spx.so
-
-# Command passthrough
-PASS_THROUGH_TARGETS := e ev er evr run exec
+# Command passthrough logic
+PASS_THROUGH_TARGETS := e ev er evr run exec r php sh
 FIRST_GOAL := $(firstword $(MAKECMDGOALS))
 ifneq (,$(filter $(FIRST_GOAL),$(PASS_THROUGH_TARGETS)))
-PASSTHRU_ARGS := $(filter-out --,$(wordlist 2,$(words $(MAKECMDGOALS)),$(MAKECMDGOALS)))
-$(eval $(PASSTHRU_ARGS):;@:)
+PASSTHRU_ARGS := $(filter-out $(FIRST_GOAL) --,$(MAKECMDGOALS))
+CMDLINE_VAR_NAMES := $(foreach v,$(.VARIABLES),$(if $(filter command line,$(origin $(v))),$(v)))
+PASSTHRU_FLAG_ARGS := $(foreach v,$(filter -%,$(CMDLINE_VAR_NAMES)),$(v)=$($(v)))
+%:
+	@:
 endif
-CMDLINE_EQ_FLAGS := $(foreach v,$(filter --%,$(.VARIABLES)),$(if $(filter command line,$(origin $(v))),$(v)=$(value $(v))))
-CLI_ARGS = $(strip $(PASSTHRU_ARGS) $(CMDLINE_EQ_FLAGS))
+CLI_ARGS = $(strip $(PASSTHRU_ARGS) $(PASSTHRU_FLAG_ARGS))
 
-# Reusable profiling macro
-# Usage: $(call EXEC_PROFILED,name,extension_so,env_vars,php_flags)
-define EXEC_PROFILED
-	@mkdir -p $(PROFILE_ROOT)/$(1)
-	$(COMPOSE) run $(DOCKER_COMPOSE_RUN_FLAGS) --no-deps $(EXTRA_MOUNT_ARG) $(SERVICE_NAME) sh -lc "/usr/bin/time -f 'real=%e user=%U sys=%S maxrss=%M' $(3) $(PHP_BIN) -d extension=$(2) $(4) /app/scripts/$(1)-run.php $(PROFILE_ROOT)/$(1)/index.json index $(INDEX_PATH) --tag=$(INDEX_TAG) --workers=1" > $(PROFILE_ROOT)/$(1)/run.log 2>&1
-endef
-
-.PHONY: prepare build up down restart e ev er evr run exec engine-status shell shellr r ffi-check tests clean profile profile-report help
+.PHONY: prepare build up down restart e ev er evr run exec engine-status shell shell0 sh phpsh r php tests clean help
 
 prepare:
 	mkdir -p .data .cache/composer .cache/phpunit
@@ -57,28 +46,38 @@ down:
 
 restart: down up
 
+# Execute shell command in running container (General purpose)
 e:
 	@if [ -z "$(CLI_ARGS)" ]; then echo "Usage: make e -- <shell command>"; exit 2; fi
-	@if [ -n "$(EXTRA_HOST_PATH)" ]; then echo "Use 'make er -- ... EXTRA_HOST_PATH=...' for one-off mounted shell commands."; exit 2; fi
-	$(COMPOSE) exec $(DOCKER_COMPOSE_EXEC_FLAGS) $(SERVICE_NAME) sh -lc "$(CLI_ARGS)"
+	$(COMPOSE) exec $(DOCKER_COMPOSE_EXEC_FLAGS) $(SERVICE_NAME) sh -c "$(CLI_ARGS)"
 
+# Execute evolver command in running container
 ev:
 	@if [ -z "$(CLI_ARGS)" ]; then echo "Usage: make ev -- <args>"; exit 2; fi
-	@if [ -n "$(EXTRA_HOST_PATH)" ]; then echo "Use 'make evr -- ... EXTRA_HOST_PATH=...' for one-off mounted evolver commands."; exit 2; fi
 	$(COMPOSE) exec $(DOCKER_COMPOSE_EXEC_FLAGS) $(SERVICE_NAME) $(PHP_BIN) bin/evolver $(CLI_ARGS)
 
+# Run one-off shell command with optional mount
 er:
-	@if [ -z "$(CLI_ARGS)" ]; then echo "Usage: make er -- <shell command> EXTRA_HOST_PATH=../path"; exit 2; fi
-	@if [ -z "$(EXTRA_HOST_PATH)" ]; then echo "EXTRA_HOST_PATH is required for 'make er'."; exit 2; fi
-	$(COMPOSE) run $(DOCKER_COMPOSE_RUN_FLAGS) --no-deps $(EXTRA_MOUNT_ARG) $(SERVICE_NAME) sh -lc "$(CLI_ARGS)"
+	$(COMPOSE) run $(DOCKER_COMPOSE_RUN_FLAGS) --no-deps $(EXTRA_MOUNT_ARG) $(SERVICE_NAME) sh -c "$(CLI_ARGS)"
 
+# Run one-off evolver command with optional mount
 evr:
-	@if [ -z "$(CLI_ARGS)" ]; then echo "Usage: make evr -- <args> EXTRA_HOST_PATH=../path"; exit 2; fi
-	@if [ -z "$(EXTRA_HOST_PATH)" ]; then echo "EXTRA_HOST_PATH is required for 'make evr'."; exit 2; fi
 	$(COMPOSE) run $(DOCKER_COMPOSE_RUN_FLAGS) --no-deps $(EXTRA_MOUNT_ARG) $(SERVICE_NAME) $(PHP_BIN) bin/evolver $(CLI_ARGS)
 
 run: evr
 exec: e
+r: e
+
+# Tool-specific shortcuts
+php:
+	$(COMPOSE) exec $(DOCKER_COMPOSE_EXEC_FLAGS) $(SERVICE_NAME) $(PHP_BIN) $(CLI_ARGS)
+
+sh:
+	@if [ -z "$(CLI_ARGS)" ]; then \
+		$(COMPOSE) exec $(SERVICE_NAME) sh; \
+	else \
+		$(COMPOSE) exec $(DOCKER_COMPOSE_EXEC_FLAGS) $(SERVICE_NAME) sh -c "$(CLI_ARGS)"; \
+    fi
 
 engine-status:
 	@$(COMPOSE) ps
@@ -86,49 +85,41 @@ engine-status:
 		$(COMPOSE) exec -T $(SERVICE_NAME) $(PHP_BIN) bin/evolver status; \
 	fi
 
-shell:
-	@if [ -n "$(EXTRA_HOST_PATH)" ]; then echo "Use 'make shellr EXTRA_HOST_PATH=../path' for a one-off mounted shell."; exit 2; fi
-	$(COMPOSE) exec $(SERVICE_NAME) sh
+shell: sh
+shell0:
+	$(COMPOSE) exec -u root $(SERVICE_NAME) sh
 
-shellr:
-	@if [ -z "$(EXTRA_HOST_PATH)" ]; then echo "EXTRA_HOST_PATH is required for 'make shellr'."; exit 2; fi
-	$(COMPOSE) run --rm --no-deps $(EXTRA_MOUNT_ARG) $(SERVICE_NAME) sh
-
-r:
-	$(COMPOSE) exec $(DOCKER_COMPOSE_EXEC_FLAGS) $(SERVICE_NAME) sh /app/file.sh
-
-ffi-check: r
+phpsh:
+	$(COMPOSE) exec $(SERVICE_NAME) $(PHP_BIN) -a
 
 tests:
-	$(COMPOSE) exec -T $(SERVICE_NAME) sh -lc "vendor/bin/phpunit --display-warnings --display-deprecations"
-
-profile:
-	@echo "Running profiling suite..."
-	$(call EXEC_PROFILED,memprof,$(MEMPROF_SO),env MEMPROF_PROFILE=1,)
-	$(call EXEC_PROFILED,meminfo,$(MEMINFO_SO),,)
-	$(call EXEC_PROFILED,spx,$(SPX_SO),env SPX_ENABLED=1 SPX_REPORT=full SPX_AUTO_START=0,-d opcache.enable_cli=0)
-	$(call EXEC_PROFILED,xhprof,$(XHPROF_SO),,)
-	@$(MAKE) profile-report
-
-profile-report:
-	@$(COMPOSE) exec -T $(SERVICE_NAME) $(PHP_BIN) /app/scripts/profile-report.php /app/.data/profiles | tee $(PROFILE_ROOT)/summary.md
+	$(COMPOSE) exec -T $(SERVICE_NAME) vendor/bin/phpunit --display-warnings --display-deprecations
 
 clean:
 	rm -f .data/evolver.sqlite .data/evolver.sqlite-*
-	rm -rf .cache/phpunit .cache/composer $(PROFILE_ROOT)/*
+	rm -rf .cache/phpunit .cache/composer
 
 help:
-	@echo "Evolver Commands:"
+	@echo "Evolver Control Commands:"
 	@echo "-----------------------"
-	@echo "make build          - Build the compose service image"
-	@echo "make up             - Start the compose service"
-	@echo "make down           - Stop the compose service"
-	@echo "make e -- <cmd>     - Exec a shell command in the running service"
-	@echo "make ev -- <args>   - Exec evolver in the running service"
-	@echo "make er -- <cmd>    - Run one-off shell command with EXTRA_HOST_PATH mounted at $(EXTRA_CONTAINER_PATH)"
-	@echo "make evr -- <args>  - Run one-off evolver command with EXTRA_HOST_PATH mounted at $(EXTRA_CONTAINER_PATH)"
-	@echo "make tests          - Run PHPUnit"
-	@echo "make profile        - Run all profilers"
-	@echo "make profile-report - Show profiling summary"
-	@echo "make shell          - Enter the running service"
-	@echo "make shellr         - Start a one-off shell with EXTRA_HOST_PATH mounted"
+	@echo "make build          - Build the Docker image"
+	@echo "make up             - Start the service (Web UI + Queue Worker)"
+	@echo "make down           - Stop the service"
+	@echo "make restart        - Full restart of the service"
+	@echo ""
+	@echo "Execution & Debugging:"
+	@echo "-----------------------"
+	@echo "make ev -- status   - Execute 'bin/evolver status' in the running container"
+	@echo "make evr -- index   - Run evolver in a one-off container (mounts EXTRA_HOST_PATH)"
+	@echo "make php -- -v      - Run raw PHP in the running container"
+	@echo "make r -- <cmd>     - Alias for 'e' - run any shell command in the container"
+	@echo "make sh             - Open interactive shell in the container"
+	@echo "make sh -- <cmd>    - Run a shell command in the container"
+	@echo "make phpsh          - Start interactive PHP shell (php -a)"
+	@echo "make shell0         - Open root shell in the container"
+	@echo ""
+	@echo "Development & Verification:"
+	@echo "-----------------------"
+	@echo "make tests          - Run PHPUnit test suite"
+	@echo "make clean          - Remove database and local caches"
+	@echo "make engine-status  - Show container status and internal evolver health"

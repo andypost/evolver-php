@@ -56,7 +56,7 @@ Ad hoc prototype benchmark scripts and checked-in result snapshots were removed 
 - **Without `pcntl`:** the `index --workers 4` command remains functional but falls back to sequential indexing.
 - **AMPHP research outcome:** AMPHP was evaluated as a `pcntl` fallback and rejected. On `/app/src`, the real command averaged about `0.30s` with an AMPHP 4-worker fallback, versus about `0.20s` for true sequential no-`pcntl` indexing and about `0.14s` with `pcntl` at 4 workers.
 - **Reason for rejection:** the worker startup path goes through `proc_open()` via `amphp/process`, and that overhead dominated this workload enough that AMPHP lost even to the sequential fallback.
-- **Swoole:** The coroutine benchmark now runs correctly with the Docker `io_uring` fix and without manual Tree-sitter resets, but it remains much slower for indexing on this workload, about `46.8 files/sec` at 4 workers.
+- **Swoole:** historical coroutine experiments were much slower for indexing on this workload, about `46.8 files/sec` at 4 workers, and are no longer part of the supported runtime path.
 - **Tree-sitter FFI:** `FFIBinding` is now fork-aware. Fresh child parsers work without manual `FFIBinding::reset()`, while inherited parent parsers are intentionally rejected after fork.
 - **Leak signal:** The standalone meminfo leak probe on `/app/src` showed `0` post-warmup real allocator growth and `728` bytes post-warmup logical heap growth across 3 iterations.
 

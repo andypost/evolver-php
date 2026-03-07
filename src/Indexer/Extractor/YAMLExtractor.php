@@ -11,15 +11,23 @@ class YAMLExtractor implements ExtractorInterface
 {
     private ?\DrupalEvolver\TreeSitter\Query $cachedQuery = null;
     private array $symbols = [];
+    private DrupalYamlSemanticExtractor $semanticExtractor;
 
     public function __construct(
         private ?\DrupalEvolver\TreeSitter\LanguageRegistry $registry = null
-    ) {}
+    ) {
+        $this->semanticExtractor = new DrupalYamlSemanticExtractor();
+    }
 
     public function extract(Node $root, string $source, string $filePath): array
     {
         $this->symbols = [];
         $basename = basename($filePath);
+
+        $semanticSymbols = $this->semanticExtractor->extract($source, $filePath);
+        if ($semanticSymbols !== null) {
+            return $semanticSymbols;
+        }
 
         $binding = $root->binding();
         if (!$binding) {

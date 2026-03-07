@@ -106,6 +106,30 @@ class QueryGeneratorTest extends TestCase
         $this->assertStringContainsString('my_module.settings', $query);
     }
 
+    public function testModuleDependenciesChangedUsesSymbolQuery(): void
+    {
+        $query = $this->generator->generate('module_dependencies_changed', [
+            'name' => 'example',
+            'symbol_type' => 'module_info',
+        ]);
+
+        $this->assertNotNull($query);
+        $this->assertStringContainsString('string_content', $query);
+        $this->assertStringContainsString('example', $query);
+    }
+
+    public function testConfigObjectChangedUsesSymbolQuery(): void
+    {
+        $query = $this->generator->generate('config_object_changed', [
+            'name' => 'system.site',
+            'symbol_type' => 'config_export',
+        ]);
+
+        $this->assertNotNull($query);
+        $this->assertStringContainsString('string_content', $query);
+        $this->assertStringContainsString('system.site', $query);
+    }
+
     public function testDeprecatedAddedUsesSymbolTypeQuery(): void
     {
         $query = $this->generator->generate('deprecated_added', [
@@ -129,6 +153,53 @@ class QueryGeneratorTest extends TestCase
         $this->assertStringContainsString('#match?', $query);
         $this->assertStringContainsString('Drupal\\\\\\\\Core\\\\\\\\Old\\\\\\\\SomeClass', $query);
         $this->assertStringNotContainsString('cls_short', $query);
+    }
+
+    public function testGlobalReplaced(): void
+    {
+        $query = $this->generator->generate('global_replaced', [
+            'name' => 'user',
+            'symbol_type' => 'function',
+        ]);
+
+        $this->assertNotNull($query);
+        $this->assertStringContainsString('global_declaration', $query);
+        $this->assertStringContainsString('$user', $query);
+    }
+
+    public function testConstantReplaced(): void
+    {
+        $query = $this->generator->generate('constant_replaced', [
+            'name' => 'LANGUAGE_NONE',
+            'symbol_type' => 'constant',
+        ]);
+
+        $this->assertNotNull($query);
+        $this->assertStringContainsString('LANGUAGE_NONE', $query);
+    }
+
+    public function testVariableAccessReplaced(): void
+    {
+        $query = $this->generator->generate('variable_access_replaced', [
+            'name' => 'nid',
+            'symbol_type' => 'function',
+        ]);
+
+        $this->assertNotNull($query);
+        $this->assertStringContainsString('member_access_expression', $query);
+        $this->assertStringContainsString('nid', $query);
+    }
+
+    public function testFunctionCallRewrite(): void
+    {
+        $query = $this->generator->generate('function_call_rewrite', [
+            'name' => 'check_plain',
+            'symbol_type' => 'function',
+        ]);
+
+        $this->assertNotNull($query);
+        $this->assertStringContainsString('function_call_expression', $query);
+        $this->assertStringContainsString('check_plain', $query);
     }
 
     public function testUnknownChangeType(): void

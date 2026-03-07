@@ -222,6 +222,16 @@ class YAMLDiffer
             'route' => 'route_removed',
             'permission' => 'permission_removed',
             'config_schema' => 'config_key_removed',
+            'module_info' => 'module_info_removed',
+            'theme_info' => 'theme_info_removed',
+            'profile_info' => 'profile_info_removed',
+            'theme_engine_info' => 'theme_engine_info_removed',
+            'link_menu' => 'link_menu_removed',
+            'link_task' => 'link_task_removed',
+            'link_action' => 'link_action_removed',
+            'link_contextual' => 'link_contextual_removed',
+            'config_export' => 'config_object_removed',
+            'recipe_manifest' => 'recipe_removed',
             default => null,
         };
     }
@@ -231,6 +241,8 @@ class YAMLDiffer
         return match ($symbolType) {
             'service' => 'service_renamed',
             'config_schema' => 'config_key_renamed',
+            'config_export' => 'config_object_renamed',
+            'recipe_manifest' => 'recipe_renamed',
             default => $symbolType . '_renamed',
         };
     }
@@ -247,6 +259,16 @@ class YAMLDiffer
             'service' => $this->serviceChangeType($old, $new),
             'route' => 'route_changed',
             'library' => 'library_changed',
+            'module_info' => $this->infoChangeType($symbolType, $old, $new),
+            'profile_info' => $this->infoChangeType($symbolType, $old, $new),
+            'theme_info' => $this->infoChangeType($symbolType, $old, $new),
+            'theme_engine_info' => 'theme_engine_info_changed',
+            'link_menu' => 'link_menu_changed',
+            'link_task' => 'link_task_changed',
+            'link_action' => 'link_action_changed',
+            'link_contextual' => 'link_contextual_changed',
+            'config_export' => 'config_object_changed',
+            'recipe_manifest' => $this->recipeChangeType($old, $new),
             default => null,
         };
     }
@@ -295,11 +317,182 @@ class YAMLDiffer
                 'old_controller' => $oldSig['controller'] ?? null,
                 'new_controller' => $newSig['controller'] ?? null,
             ],
+            'module_info', 'profile_info', 'theme_info', 'theme_engine_info' => $this->buildInfoDiffDetails($oldSig, $newSig),
+            'link_menu', 'link_task', 'link_action', 'link_contextual' => $this->buildStructuredDiffDetails($oldSig, $newSig),
+            'config_export' => $this->buildConfigDiffDetails($oldSig, $newSig),
+            'recipe_manifest' => $this->buildRecipeDiffDetails($oldSig, $newSig),
             default => [
                 'old_signature' => $oldSig,
                 'new_signature' => $newSig,
             ],
         };
+    }
+
+    /**
+     * @param array<string, mixed> $old
+     * @param array<string, mixed> $new
+     */
+    private function infoChangeType(string $symbolType, array $old, array $new): string
+    {
+        $oldSig = $this->decodeSignature($old);
+        $newSig = $this->decodeSignature($new);
+        $oldDeps = $this->normalizeStringList($oldSig['dependencies'] ?? []);
+        $newDeps = $this->normalizeStringList($newSig['dependencies'] ?? []);
+
+        if ($oldDeps !== $newDeps) {
+            return match ($symbolType) {
+                'module_info' => 'module_dependencies_changed',
+                'profile_info' => 'profile_dependencies_changed',
+                default => $symbolType . '_changed',
+            };
+        }
+
+        if ($symbolType === 'theme_info' && ($oldSig['base theme'] ?? null) !== ($newSig['base theme'] ?? null)) {
+            return 'theme_base_changed';
+        }
+
+        return $symbolType . '_changed';
+    }
+
+    /**
+     * @param array<string, mixed> $old
+     * @param array<string, mixed> $new
+     */
+    private function recipeChangeType(array $old, array $new): string
+    {
+        $oldSig = $this->decodeSignature($old);
+        $newSig = $this->decodeSignature($new);
+
+        if ($this->normalizeStringList($oldSig['install'] ?? []) !== $this->normalizeStringList($newSig['install'] ?? [])) {
+            return 'recipe_install_changed';
+        }
+
+        return 'recipe_changed';
+    }
+
+    /**
+     * @param array<string, mixed> $oldSig
+     * @param array<string, mixed> $newSig
+     * @return array<string, mixed>
+     */
+    private function buildInfoDiffDetails(array $oldSig, array $newSig): array
+    {
+        $oldDeps = $this->normalizeStringList($oldSig['dependencies'] ?? []);
+        $newDeps = $this->normalizeStringList($newSig['dependencies'] ?? []);
+
+        return [
+            'changed_keys' => $this->changedTopLevelKeys($oldSig, $newSig),
+            'old_dependencies' => $oldDeps,
+            'new_dependencies' => $newDeps,
+            'added_dependencies' => array_values(array_diff($newDeps, $oldDeps)),
+            'removed_dependencies' => array_values(array_diff($oldDeps, $newDeps)),
+            'old_configure' => $oldSig['configure'] ?? null,
+            'new_configure' => $newSig['configure'] ?? null,
+            'old_base_theme' => $oldSig['base theme'] ?? null,
+            'new_base_theme' => $newSig['base theme'] ?? null,
+        ];
+    }
+
+    /**
+     * @param array<string, mixed> $oldSig
+     * @param array<string, mixed> $newSig
+     * @return array<string, mixed>
+     */
+    private function buildStructuredDiffDetails(array $oldSig, array $newSig): array
+    {
+        return [
+            'changed_keys' => $this->changedTopLevelKeys($oldSig, $newSig),
+            'old_signature' => $oldSig,
+            'new_signature' => $newSig,
+        ];
+    }
+
+    /**
+     * @param array<string, mixed> $oldSig
+     * @param array<string, mixed> $newSig
+     * @return array<string, mixed>
+     */
+    private function buildConfigDiffDetails(array $oldSig, array $newSig): array
+    {
+        $oldDeps = is_array($oldSig['dependencies'] ?? null) ? $oldSig['dependencies'] : [];
+        $newDeps = is_array($newSig['dependencies'] ?? null) ? $newSig['dependencies'] : [];
+
+        return [
+            'added_top_level_keys' => array_values(array_diff(array_keys($newSig), array_keys($oldSig))),
+            'removed_top_level_keys' => array_values(array_diff(array_keys($oldSig), array_keys($newSig))),
+            'changed_top_level_keys' => $this->changedTopLevelKeys($oldSig, $newSig),
+            'old_dependencies' => $oldDeps,
+            'new_dependencies' => $newDeps,
+        ];
+    }
+
+    /**
+     * @param array<string, mixed> $oldSig
+     * @param array<string, mixed> $newSig
+     * @return array<string, mixed>
+     */
+    private function buildRecipeDiffDetails(array $oldSig, array $newSig): array
+    {
+        $oldInstall = $this->normalizeStringList($oldSig['install'] ?? []);
+        $newInstall = $this->normalizeStringList($newSig['install'] ?? []);
+        $oldRecipes = $this->normalizeStringList($oldSig['recipes'] ?? []);
+        $newRecipes = $this->normalizeStringList($newSig['recipes'] ?? []);
+
+        return [
+            'changed_keys' => $this->changedTopLevelKeys($oldSig, $newSig),
+            'added_install' => array_values(array_diff($newInstall, $oldInstall)),
+            'removed_install' => array_values(array_diff($oldInstall, $newInstall)),
+            'added_recipes' => array_values(array_diff($newRecipes, $oldRecipes)),
+            'removed_recipes' => array_values(array_diff($oldRecipes, $newRecipes)),
+        ];
+    }
+
+    /**
+     * @param array<string, mixed> $oldSig
+     * @param array<string, mixed> $newSig
+     * @return array<int, string>
+     */
+    private function changedTopLevelKeys(array $oldSig, array $newSig): array
+    {
+        $keys = array_values(array_unique(array_merge(array_keys($oldSig), array_keys($newSig))));
+        sort($keys);
+
+        $changed = [];
+        foreach ($keys as $key) {
+            if (($oldSig[$key] ?? null) !== ($newSig[$key] ?? null)) {
+                $changed[] = $key;
+            }
+        }
+
+        return $changed;
+    }
+
+    /**
+     * @param mixed $value
+     * @return array<int, string>
+     */
+    private function normalizeStringList(mixed $value): array
+    {
+        if (!is_array($value)) {
+            return [];
+        }
+
+        $items = [];
+        foreach ($value as $item) {
+            if (!is_scalar($item) && $item !== null) {
+                continue;
+            }
+
+            $string = trim((string) $item);
+            if ($string !== '') {
+                $items[] = $string;
+            }
+        }
+
+        $items = array_values(array_unique($items));
+        sort($items);
+
+        return $items;
     }
 
     /**

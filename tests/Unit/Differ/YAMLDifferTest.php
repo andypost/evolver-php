@@ -24,15 +24,19 @@ class YAMLDifferTest extends TestCase
             ['id' => 3, 'language' => 'yaml', 'symbol_type' => 'permission', 'fqn' => 'old permission'],
             ['id' => 4, 'language' => 'yaml', 'symbol_type' => 'config_schema', 'fqn' => 'mod.settings'],
             ['id' => 5, 'language' => 'yaml', 'symbol_type' => 'library', 'fqn' => 'mod/base'],
+            ['id' => 6, 'language' => 'yaml', 'symbol_type' => 'module_info', 'fqn' => 'example'],
+            ['id' => 7, 'language' => 'yaml', 'symbol_type' => 'config_export', 'fqn' => 'system.site'],
         ];
 
         $changes = $this->differ->findRemovedChanges($removed);
 
-        $this->assertCount(4, $changes);
+        $this->assertCount(6, $changes);
         $this->assertSame('service_removed', $changes[0]['change_type']);
         $this->assertSame('route_removed', $changes[1]['change_type']);
         $this->assertSame('permission_removed', $changes[2]['change_type']);
         $this->assertSame('config_key_removed', $changes[3]['change_type']);
+        $this->assertSame('module_info_removed', $changes[4]['change_type']);
+        $this->assertSame('config_object_removed', $changes[5]['change_type']);
     }
 
     public function testFindRenameChangesForService(): void
@@ -121,5 +125,89 @@ class YAMLDifferTest extends TestCase
         $details = json_decode((string) $changes[0]['diff_json'], true);
         $this->assertSame('/old', $details['old_path']);
         $this->assertSame('/new', $details['new_path']);
+    }
+
+    public function testFindChangedChangesForModuleDependencyChange(): void
+    {
+        $changed = [[
+            'old' => [
+                'id' => 41,
+                'language' => 'yaml',
+                'symbol_type' => 'module_info',
+                'fqn' => 'example',
+                'signature_json' => '{"dependencies":["drupal:block","drupal:node"],"configure":"example.settings"}',
+            ],
+            'new' => [
+                'id' => 42,
+                'language' => 'yaml',
+                'symbol_type' => 'module_info',
+                'fqn' => 'example',
+                'signature_json' => '{"dependencies":["drupal:block","drupal:views"],"configure":"example.settings"}',
+            ],
+        ]];
+
+        $changes = $this->differ->findChangedChanges($changed);
+
+        $this->assertCount(1, $changes);
+        $this->assertSame('module_dependencies_changed', $changes[0]['change_type']);
+        $details = json_decode((string) $changes[0]['diff_json'], true);
+        $this->assertSame(['drupal:views'], $details['added_dependencies']);
+        $this->assertSame(['drupal:node'], $details['removed_dependencies']);
+    }
+
+    public function testFindChangedChangesForConfigExport(): void
+    {
+        $changed = [[
+            'old' => [
+                'id' => 51,
+                'language' => 'yaml',
+                'symbol_type' => 'config_export',
+                'fqn' => 'system.site',
+                'signature_json' => '{"status":true,"name":"Old"}',
+            ],
+            'new' => [
+                'id' => 52,
+                'language' => 'yaml',
+                'symbol_type' => 'config_export',
+                'fqn' => 'system.site',
+                'signature_json' => '{"status":false,"name":"Old","mail":"admin@example.com"}',
+            ],
+        ]];
+
+        $changes = $this->differ->findChangedChanges($changed);
+
+        $this->assertCount(1, $changes);
+        $this->assertSame('config_object_changed', $changes[0]['change_type']);
+        $details = json_decode((string) $changes[0]['diff_json'], true);
+        $this->assertSame(['mail'], $details['added_top_level_keys']);
+        $this->assertContains('status', $details['changed_top_level_keys']);
+    }
+
+    public function testFindChangedChangesForRecipeInstallChange(): void
+    {
+        $changed = [[
+            'old' => [
+                'id' => 61,
+                'language' => 'yaml',
+                'symbol_type' => 'recipe_manifest',
+                'fqn' => 'standard',
+                'signature_json' => '{"install":["block"],"recipes":["basic_html_format"]}',
+            ],
+            'new' => [
+                'id' => 62,
+                'language' => 'yaml',
+                'symbol_type' => 'recipe_manifest',
+                'fqn' => 'standard',
+                'signature_json' => '{"install":["block","node"],"recipes":["basic_html_format"]}',
+            ],
+        ]];
+
+        $changes = $this->differ->findChangedChanges($changed);
+
+        $this->assertCount(1, $changes);
+        $this->assertSame('recipe_install_changed', $changes[0]['change_type']);
+        $details = json_decode((string) $changes[0]['diff_json'], true);
+        $this->assertSame(['node'], $details['added_install']);
+        $this->assertSame([], $details['removed_install']);
     }
 }

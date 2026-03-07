@@ -1,0 +1,73 @@
+{% extends "layout.twig" %}
+
+{% block content %}
+    <nav class="breadcrumb">
+        <a href="/versions">Versions</a> &raquo; <span>{{ version.tag }}</span>
+    </nav>
+
+    <section class="hero hero-compact">
+        <div>
+            <p class="eyebrow">Version Details</p>
+            <h1>{{ version.tag }}</h1>
+        </div>
+        <div class="hero-actions">
+            <a href="/versions/{{ version.id }}/symbols" class="button button-primary">Browse Symbols</a>
+        </div>
+    </section>
+
+    <div class="grid two-up">
+        <section class="panel">
+            <div class="panel-head">
+                <h2>Statistics</h2>
+            </div>
+            <div class="stat-grid">
+                <div class="stat-item">
+                    <span class="label">Major</span>
+                    <span class="value">{{ version.major }}</span>
+                </div>
+                <div class="stat-item">
+                    <span class="label">Minor</span>
+                    <span class="value">{{ version.minor }}</span>
+                </div>
+                <div class="stat-item">
+                    <span class="label">Patch</span>
+                    <span class="value">{{ version.patch }}</span>
+                </div>
+                <div class="stat-item">
+                    <span class="label">Files</span>
+                    <span class="value">{{ version.file_count|number_format }}</span>
+                </div>
+                <div class="stat-item">
+                    <span class="label">Symbols</span>
+                    <span class="value">{{ version.symbol_count|number_format }}</span>
+                </div>
+                <div class="stat-item">
+                    <span class="label">Indexed</span>
+                    <span class="value">{{ version.indexed_at|date('Y-m-d H:i') }}</span>
+                </div>
+            </div>
+        </section>
+
+        <section class="panel">
+            <div class="panel-head">
+                <h2>Symbol Distribution</h2>
+            </div>
+            <table class="table">
+                <thead>
+                <tr>
+                    <th>Type</th>
+                    <th class="text-right">Count</th>
+                </tr>
+                </thead>
+                <tbody>
+                {% for row in stats %}
+                    <tr>
+                        <td><code>{{ row.symbol_type }}</code></td>
+                        <td class="text-right">{{ row.cnt|number_format }}</td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </section>
+    </div>
+{% endblock %}

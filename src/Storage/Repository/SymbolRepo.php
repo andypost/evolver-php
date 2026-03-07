@@ -110,6 +110,60 @@ class SymbolRepo
     }
 
     #[\NoDiscard]
+    public function findByVersionPaginated(int $versionId, int $offset = 0, int $limit = 100, ?string $type = null, ?string $search = null): array
+    {
+        $sql = 'SELECT s.*, f.file_path 
+                FROM symbols s 
+                JOIN parsed_files f ON s.file_id = f.id
+                WHERE s.version_id = :vid';
+        $params = ['vid' => $versionId];
+
+        if ($type) {
+            $sql .= ' AND s.symbol_type = :type';
+            $params['type'] = $type;
+        }
+
+        if ($search) {
+            $sql .= ' AND (s.fqn LIKE :search OR s.name LIKE :search)';
+            $params['search'] = '%' . $search . '%';
+        }
+
+        $sql .= ' ORDER BY s.fqn ASC LIMIT :limit OFFSET :offset';
+        $params['limit'] = $limit;
+        $params['offset'] = $offset;
+
+        return $this->db->query($sql, $params)->fetchAll();
+    }
+
+    #[\NoDiscard]
+    public function countByVersionFiltered(int $versionId, ?string $type = null, ?string $search = null): int
+    {
+        $sql = 'SELECT COUNT(*) as cnt FROM symbols s WHERE s.version_id = :vid';
+        $params = ['vid' => $versionId];
+
+        if ($type) {
+            $sql .= ' AND s.symbol_type = :type';
+            $params['type'] = $type;
+        }
+
+        if ($search) {
+            $sql .= ' AND (s.fqn LIKE :search OR s.name LIKE :search)';
+            $params['search'] = '%' . $search . '%';
+        }
+
+        return (int) $this->db->query($sql, $params)->fetch()['cnt'];
+    }
+
+    #[\NoDiscard]
+    public function getSymbolTypes(int $versionId): array
+    {
+        return $this->db->query(
+            'SELECT DISTINCT symbol_type FROM symbols WHERE version_id = :vid ORDER BY symbol_type',
+            ['vid' => $versionId]
+        )->fetchAll(\PDO::FETCH_COLUMN);
+    }
+
+    #[\NoDiscard]
     public function findDeprecated(int $versionId): array
     {
         return $this->db->query(

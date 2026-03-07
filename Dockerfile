@@ -15,6 +15,9 @@ ARG GROUP_ID=1000
 RUN set -eux; \
     echo "https://dl-cdn.alpinelinux.org/alpine/edge/testing" >> /etc/apk/repositories; \
     apk add --no-cache \
+        ca-certificates \
+        git \
+        openssh-client \
         time \
         php85 \
         php85-pdo_sqlite \
@@ -40,9 +43,9 @@ RUN set -eux; \
         php85-pecl-xhprof; \
     ln -sf /usr/bin/php85 /usr/bin/php
 
-# Keep meminfo enabled for memory testing, disable other profilers by default
+# Keep meminfo enabled for memory testing, disable other profilers and swoole by default
 RUN mkdir -p /etc/php85/conf.d.disabled && \
-    for ini_name in memprof.ini spx.ini xhprof.ini; do \
+    for ini_name in memprof.ini swoole.ini spx.ini xhprof.ini; do \
         if [ -f "/etc/php85/conf.d/${ini_name}" ]; then \
             mv "/etc/php85/conf.d/${ini_name}" "/etc/php85/conf.d.disabled/${ini_name}"; \
         fi; \
@@ -66,7 +69,6 @@ RUN addgroup -g $GROUP_ID evolver && \
 WORKDIR /app
 
 # Setup PHP configuration for OPcache and FFI preload
-USER root
 RUN set -eux; \
     php_conf_dir="/etc/php85/conf.d"; \
     php_module_dir="/usr/lib/php85/modules"; \
@@ -76,25 +78,23 @@ RUN set -eux; \
     echo "opcache.interned_strings_buffer=16" >> "${php_conf_dir}/00_opcache.ini"; \
     echo "opcache.jit_buffer_size=0" >> "${php_conf_dir}/00_opcache.ini"; \
     echo "opcache.jit=disable" >> "${php_conf_dir}/00_opcache.ini"; \
-    echo "memory_limit=512M" >> "${php_conf_dir}/00_opcache.ini"; \
+    echo "memory_limit=1G" >> "${php_conf_dir}/00_opcache.ini"; \
     echo "extension=${php_module_dir}/ffi.so" > "${php_conf_dir}/00_ffi.ini"; \
     echo "ffi.enable=1" >> "${php_conf_dir}/00_ffi.ini"; \
     echo "ffi.preload=/app/src/preload.php" >> "${php_conf_dir}/00_ffi.ini"
 
-# Note: igbinary is loaded by its own ini file from the package
-
-# Pre-copy src for preload
+# Pre-copy sources for dependency install (caching)
 COPY src ./src
-
-# Install composer dependencies
 COPY composer.json composer.lock ./
+
 RUN composer install --no-dev --prefer-dist --no-interaction --no-progress --no-scripts --no-autoloader --ignore-platform-reqs
 
 # Copy remaining project files
 COPY . .
 RUN composer dump-autoload --no-dev --optimize --classmap-authoritative --no-interaction
 
-USER evolver
+RUN chown -R evolver:evolver /app
 
-# Keep container alive
-ENTRYPOINT ["tail", "-f", "/dev/null"]
+# No ENTRYPOINT for maximum flexibility during dev
+USER evolver
+CMD ["php85", "bin/evolver", "serve", "--host=0.0.0.0", "--port=8080"]

@@ -21,12 +21,13 @@ class TemplateApplier
     public function apply(
         int $projectId,
         string $projectPath,
+        ?int $scanRunId = null,
         bool $dryRun = false,
         bool $interactive = false,
         ?OutputInterface $output = null,
         ?callable $confirm = null,
     ): int {
-        $stats = $this->applyWithStats($projectId, $projectPath, $dryRun, $interactive, $output, $confirm);
+        $stats = $this->applyWithStats($projectId, $projectPath, $scanRunId, $dryRun, $interactive, $output, $confirm);
         return $dryRun ? (int) $stats['would_apply'] : (int) $stats['applied'];
     }
 
@@ -34,12 +35,15 @@ class TemplateApplier
     public function applyWithStats(
         int $projectId,
         string $projectPath,
+        ?int $scanRunId = null,
         bool $dryRun = false,
         bool $interactive = false,
         ?OutputInterface $output = null,
         ?callable $confirm = null,
     ): array {
-        $matches = $this->api->findPendingFixesWithTemplates($projectId);
+        $matches = $scanRunId !== null
+            ? $this->api->findPendingFixesWithTemplatesForRun($scanRunId)
+            : $this->api->findPendingFixesWithTemplates($projectId);
 
         $stats = [
             'total' => count($matches),

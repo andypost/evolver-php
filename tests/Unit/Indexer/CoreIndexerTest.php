@@ -74,6 +74,70 @@ class CoreIndexerTest extends TestCase
         }
     }
 
+    public function testIndexStoresSemanticYamlSymbols(): void
+    {
+        $parser = $this->createParserOrSkip();
+        $api = new DatabaseApi(':memory:');
+        $indexer = new CoreIndexer($parser, $api);
+        $indexer->setWorkerCount(1);
+        $indexer->setStoreAst(false);
+
+        $projectDir = $this->createTempDir('evolver-indexer-yaml-');
+        mkdir($projectDir . '/modules/custom/example', 0777, true);
+        mkdir($projectDir . '/db/config', 0777, true);
+
+        file_put_contents($projectDir . '/modules/custom/example/example.info.yml', <<<YAML
+name: Example
+type: module
+dependencies:
+  - drupal:block
+configure: example.settings
+YAML);
+
+        file_put_contents($projectDir . '/db/config/system.site.yml', <<<YAML
+uuid: 00000000-0000-0000-0000-000000000000
+langcode: en
+_core:
+  default_config_hash: abc123
+status: true
+dependencies:
+  module:
+    - node
+    - block
+YAML);
+
+        try {
+            $indexer->index($projectDir, '10.2.0');
+
+            $version = $api->versions()->findByTag('10.2.0');
+            $this->assertNotNull($version);
+            $versionId = (int) $version['id'];
+
+            $moduleRow = $api->db()->query(
+                'SELECT symbol_type, signature_json, metadata_json FROM symbols WHERE version_id = :vid AND fqn = :fqn',
+                ['vid' => $versionId, 'fqn' => 'example']
+            )->fetch();
+            $this->assertNotFalse($moduleRow);
+            $this->assertSame('module_info', $moduleRow['symbol_type']);
+            $moduleMetadata = json_decode((string) $moduleRow['metadata_json'], true);
+            $this->assertSame(['block'], $moduleMetadata['dependency_targets']);
+            $this->assertSame('example.settings', $moduleMetadata['configure_route']);
+
+            $configRow = $api->db()->query(
+                'SELECT symbol_type, signature_json FROM symbols WHERE version_id = :vid AND fqn = :fqn',
+                ['vid' => $versionId, 'fqn' => 'system.site']
+            )->fetch();
+            $this->assertNotFalse($configRow);
+            $this->assertSame('config_export', $configRow['symbol_type']);
+            $configSignature = json_decode((string) $configRow['signature_json'], true);
+            $this->assertArrayNotHasKey('uuid', $configSignature);
+            $this->assertArrayNotHasKey('langcode', $configSignature);
+            $this->assertSame(['block', 'node'], $configSignature['dependencies']['module']);
+        } finally {
+            $this->removeDir($projectDir);
+        }
+    }
+
     private function createParserOrSkip(): Parser
     {
         if (!extension_loaded('ffi')) {

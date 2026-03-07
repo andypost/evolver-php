@@ -204,7 +204,8 @@ PHP;
         $scanner->setWorkerCount(1);
 
         try {
-            $scanner->scan($projectDir, '1.1.0', '1.0.0');
+            $scanRunId = $scanner->scan($projectDir, '1.1.0', '1.0.0');
+            $this->assertGreaterThan(0, $scanRunId);
             $project = $api->projects()->findByPath($projectDir);
             $this->assertNotNull($project);
 
@@ -216,7 +217,7 @@ PHP;
                 12 * 1024 * 1024,
                 30,
                 function () use ($scanner, $projectDir): void {
-                    $scanner->scan($projectDir, '1.1.0', '1.0.0');
+                    (void) $scanner->scan($projectDir, '1.1.0', '1.0.0');
                 },
                 'Repeated project scans leaked memory'
             );

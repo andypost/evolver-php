@@ -6,8 +6,12 @@ namespace DrupalEvolver\Storage;
 
 use DrupalEvolver\Storage\Repository\ChangeRepo;
 use DrupalEvolver\Storage\Repository\FileRepo;
+use DrupalEvolver\Storage\Repository\JobLogRepo;
+use DrupalEvolver\Storage\Repository\JobRepo;
 use DrupalEvolver\Storage\Repository\MatchRepo;
+use DrupalEvolver\Storage\Repository\ProjectBranchRepo;
 use DrupalEvolver\Storage\Repository\ProjectRepo;
+use DrupalEvolver\Storage\Repository\ScanRunRepo;
 use DrupalEvolver\Storage\Repository\SymbolRepo;
 use DrupalEvolver\Storage\Repository\VersionRepo;
 use Generator;
@@ -29,6 +33,10 @@ class DatabaseApi
     private ?SymbolRepo $symbolRepo = null;
     private ?ChangeRepo $changeRepo = null;
     private ?ProjectRepo $projectRepo = null;
+    private ?ProjectBranchRepo $projectBranchRepo = null;
+    private ?ScanRunRepo $scanRunRepo = null;
+    private ?JobRepo $jobRepo = null;
+    private ?JobLogRepo $jobLogRepo = null;
     private ?MatchRepo $matchRepo = null;
 
     /** @var array<string, PDOStatement> */
@@ -88,9 +96,122 @@ class DatabaseApi
     }
 
     #[\NoDiscard]
+    public function projectBranches(): ProjectBranchRepo
+    {
+        return $this->projectBranchRepo ??= new ProjectBranchRepo($this->database);
+    }
+
+    #[\NoDiscard]
+    public function scanRuns(): ScanRunRepo
+    {
+        return $this->scanRunRepo ??= new ScanRunRepo($this->database);
+    }
+
+    #[\NoDiscard]
+    public function jobs(): JobRepo
+    {
+        return $this->jobRepo ??= new JobRepo($this->database);
+    }
+
+    #[\NoDiscard]
+    public function jobLogs(): JobLogRepo
+    {
+        return $this->jobLogRepo ??= new JobLogRepo($this->database);
+    }
+
+    #[\NoDiscard]
     public function matches(): MatchRepo
     {
         return $this->matchRepo ??= new MatchRepo($this->database, $this);
+    }
+
+    #[\NoDiscard]
+    public function findSymbolById(int $id): ?array
+    {
+        $sql = 'SELECT s.*, f.file_path 
+                FROM symbols s 
+                JOIN parsed_files f ON s.file_id = f.id 
+                WHERE s.id = :id';
+        return $this->database->query($sql, ['id' => $id])->fetch() ?: null;
+    }
+
+    /**
+     * @return array<int, array{relationship: string, symbol: array<string, mixed>}>
+     */
+    #[\NoDiscard]
+    public function findSemanticLinksForSymbol(int $symbolId): array
+    {
+        $symbol = $this->findSymbolById($symbolId);
+        if ($symbol === null) {
+            return [];
+        }
+
+        $versionId = (int) ($symbol['version_id'] ?? 0);
+        if ($versionId <= 0) {
+            return [];
+        }
+
+        $links = [];
+        $symbolType = (string) ($symbol['symbol_type'] ?? '');
+        $language = (string) ($symbol['language'] ?? '');
+
+        if ($language === 'yaml' && $symbolType === 'service') {
+            $signature = $this->decodeJsonMap($symbol['signature_json'] ?? null);
+            $classFqn = ltrim((string) ($signature['class'] ?? ''), '\\');
+            if ($classFqn !== '') {
+                $classSymbol = $this->database->query(
+                    'SELECT s.*, f.file_path
+                     FROM symbols s
+                     JOIN parsed_files f ON f.id = s.file_id
+                     WHERE s.version_id = :vid
+                       AND s.language = :lang
+                       AND s.symbol_type = :type
+                       AND s.fqn = :fqn
+                     LIMIT 1',
+                    [
+                        'vid' => $versionId,
+                        'lang' => 'php',
+                        'type' => 'class',
+                        'fqn' => $classFqn,
+                    ]
+                )->fetch();
+
+                if ($classSymbol !== false) {
+                    $links[] = [
+                        'relationship' => 'implementation_class',
+                        'symbol' => $classSymbol,
+                    ];
+                }
+            }
+        }
+
+        if ($language === 'php' && $symbolType === 'class') {
+            $serviceRows = $this->database->query(
+                'SELECT s.*, f.file_path
+                 FROM symbols s
+                 JOIN parsed_files f ON f.id = s.file_id
+                 WHERE s.version_id = :vid
+                   AND s.language = :lang
+                   AND s.symbol_type = :type
+                   AND ltrim(COALESCE(json_extract(s.signature_json, \'$.class\'), \'\'), \'\\\') = :fqn
+                 ORDER BY s.fqn',
+                [
+                    'vid' => $versionId,
+                    'lang' => 'yaml',
+                    'type' => 'service',
+                    'fqn' => (string) ($symbol['fqn'] ?? ''),
+                ]
+            )->fetchAll();
+
+            foreach ($serviceRows as $serviceRow) {
+                $links[] = [
+                    'relationship' => 'registered_service',
+                    'symbol' => $serviceRow,
+                ];
+            }
+        }
+
+        return $links;
     }
 
     #[\NoDiscard]
@@ -353,8 +474,12 @@ class DatabaseApi
      * Pending matches with their fix_template and change metadata. Used by TemplateApplier.
      */
     #[\NoDiscard]
-    public function findPendingFixesWithTemplates(int $projectId): array
+    public function findPendingFixesWithTemplates(int $projectId, ?int $scanRunId = null): array
     {
+        if ($scanRunId !== null) {
+            return $this->findPendingFixesWithTemplatesForRun($scanRunId);
+        }
+
         return $this->database->query(
             "SELECT cm.*, c.fix_template, c.change_type, c.old_fqn
              FROM code_matches cm
@@ -365,19 +490,97 @@ class DatabaseApi
     }
 
     /**
+     * Pending matches with templates for a specific scan run.
+     */
+    #[\NoDiscard]
+    public function findPendingFixesWithTemplatesForRun(int $scanRunId): array
+    {
+        return $this->database->query(
+            "SELECT cm.*, c.fix_template, c.change_type, c.old_fqn
+             FROM code_matches cm
+             JOIN changes c ON cm.change_id = c.id
+             WHERE cm.scan_run_id = :scan_run_id
+               AND cm.status = 'pending'
+               AND c.fix_template IS NOT NULL
+             ORDER BY cm.file_path, cm.line_start, cm.id",
+            ['scan_run_id' => $scanRunId]
+        )->fetchAll();
+    }
+
+    /**
      * All matches with change info for reporting. Used by ReportCommand.
      */
     #[\NoDiscard]
-    public function findMatchesWithChanges(int $projectId): array
+    public function findMatchesWithChanges(int $projectId, ?int $scanRunId = null): array
     {
+        if ($scanRunId !== null) {
+            return $this->findMatchesWithChangesForRun($scanRunId);
+        }
+
         return $this->database->query(
-            "SELECT cm.*, c.change_type, c.severity, c.old_fqn
+            "SELECT cm.*, c.change_type, c.severity, c.old_fqn, c.new_fqn
              FROM code_matches cm
              JOIN changes c ON cm.change_id = c.id
              WHERE cm.project_id = :pid
-             ORDER BY cm.file_path, cm.line_start",
+             ORDER BY cm.file_path, cm.line_start, cm.id",
             ['pid' => $projectId]
         )->fetchAll();
+    }
+
+    /**
+     * All matches with change info for a specific scan run.
+     */
+    #[\NoDiscard]
+    public function findMatchesWithChangesForRun(int $scanRunId): array
+    {
+        return $this->database->query(
+            "SELECT cm.*, c.change_type, c.severity, c.old_fqn, c.new_fqn
+             FROM code_matches cm
+             JOIN changes c ON cm.change_id = c.id
+             WHERE cm.scan_run_id = :scan_run_id
+             ORDER BY cm.file_path, cm.line_start, cm.id",
+            ['scan_run_id' => $scanRunId]
+        )->fetchAll();
+    }
+
+    /**
+     * Aggregate summary for a scan run, used by run detail pages and completion bookkeeping.
+     *
+     * @return array{total: int, auto_fixable: int, by_severity: array<string, int>, by_change_type: array<string, int>}
+     */
+    #[\NoDiscard]
+    public function summarizeScanRun(int $scanRunId): array
+    {
+        $rows = $this->database->query(
+            "SELECT c.severity, c.change_type, cm.fix_method, COUNT(*) AS cnt
+             FROM code_matches cm
+             JOIN changes c ON cm.change_id = c.id
+             WHERE cm.scan_run_id = :scan_run_id
+             GROUP BY c.severity, c.change_type, cm.fix_method",
+            ['scan_run_id' => $scanRunId]
+        )->fetchAll();
+
+        $summary = [
+            'total' => 0,
+            'auto_fixable' => 0,
+            'by_severity' => [],
+            'by_change_type' => [],
+        ];
+
+        foreach ($rows as $row) {
+            $count = (int) ($row['cnt'] ?? 0);
+            $severity = (string) ($row['severity'] ?? 'unknown');
+            $changeType = (string) ($row['change_type'] ?? 'unknown');
+            $summary['total'] += $count;
+            $summary['by_severity'][$severity] = ($summary['by_severity'][$severity] ?? 0) + $count;
+            $summary['by_change_type'][$changeType] = ($summary['by_change_type'][$changeType] ?? 0) + $count;
+
+            if (($row['fix_method'] ?? null) === 'template') {
+                $summary['auto_fixable'] += $count;
+            }
+        }
+
+        return $summary;
     }
 
     // -- Status / utility queries --------------------------------------------
@@ -394,8 +597,27 @@ class DatabaseApi
             'symbol_count' => (int) $this->database->query('SELECT COUNT(*) as cnt FROM symbols')->fetch()['cnt'],
             'change_count' => (int) $this->database->query('SELECT COUNT(*) as cnt FROM changes')->fetch()['cnt'],
             'project_count' => (int) $this->database->query('SELECT COUNT(*) as cnt FROM projects')->fetch()['cnt'],
+            'scan_run_count' => (int) $this->database->query('SELECT COUNT(*) as cnt FROM scan_runs')->fetch()['cnt'],
+            'job_count' => (int) $this->database->query('SELECT COUNT(*) as cnt FROM jobs')->fetch()['cnt'],
+            'active_job_count' => (int) $this->database->query("SELECT COUNT(*) as cnt FROM jobs WHERE status IN ('queued', 'running')")->fetch()['cnt'],
             'match_count' => (int) $this->database->query('SELECT COUNT(*) as cnt FROM code_matches')->fetch()['cnt'],
         ];
+    }
+
+    #[\NoDiscard]
+    public function getChangesSummaryByVersionPair(): array
+    {
+        return $this->database->query(
+            'SELECT vf.tag AS from_tag, vt.tag AS to_tag, COUNT(*) AS change_count,
+                    SUM(CASE WHEN c.severity = "breaking" THEN 1 ELSE 0 END) AS breaking_count,
+                    SUM(CASE WHEN c.severity = "deprecation" THEN 1 ELSE 0 END) AS deprecation_count,
+                    SUM(CASE WHEN c.severity = "notice" THEN 1 ELSE 0 END) AS notice_count
+             FROM changes c
+             JOIN versions vf ON c.from_version_id = vf.id
+             JOIN versions vt ON c.to_version_id = vt.id
+             GROUP BY c.from_version_id, c.to_version_id
+             ORDER BY vf.weight, vt.weight'
+        )->fetchAll();
     }
 
     /**
@@ -410,13 +632,129 @@ class DatabaseApi
     }
 
     /**
-     * Fetch a single symbol by ID.
+     * Search semantic YAML symbols by exact references stored in metadata/signature JSON.
+     *
+     * Intended for Drupal YAML use cases like:
+     * - find info files mentioning module "block"
+     * - find links referencing route "entity.block.edit_form"
+     * - find exported config depending on module "node"
+     *
+     * @param array<int, string> $symbolTypes
+     * @return array<int, array<string, mixed>>
      */
     #[\NoDiscard]
-    public function findSymbolById(int $id): ?array
+    public function searchSemanticYamlSymbols(int $versionId, string $term, array $symbolTypes = [], int $limit = 100): array
     {
-        $row = $this->database->query('SELECT * FROM symbols WHERE id = ?', [$id])->fetch();
-        return $row ?: null;
+        $term = trim($term);
+        $limit = max(1, $limit);
+        if ($term === '') {
+            return [];
+        }
+
+        $sql = <<<SQL
+            SELECT
+                s.*,
+                f.file_path,
+                cs.fqn AS resolved_class_fqn,
+                cf.file_path AS resolved_class_file_path
+            FROM symbols s
+            JOIN parsed_files f ON f.id = s.file_id
+            LEFT JOIN symbols cs ON cs.version_id = s.version_id
+                AND cs.language = 'php'
+                AND cs.symbol_type = 'class'
+                AND cs.fqn = ltrim(COALESCE(json_extract(s.signature_json, '$.class'), ''), '\\')
+            LEFT JOIN parsed_files cf ON cf.id = cs.file_id
+            WHERE s.version_id = :vid
+              AND s.language = :lang
+            SQL;
+        $params = [
+            'vid' => $versionId,
+            'lang' => 'yaml',
+            'term' => $term,
+            'like' => '%' . $term . '%',
+        ];
+
+        if ($symbolTypes !== []) {
+            $typeConditions = [];
+            foreach (array_values($symbolTypes) as $index => $symbolType) {
+                $key = 'type' . $index;
+                $typeConditions[] = ':' . $key;
+                $params[$key] = $symbolType;
+            }
+
+            $sql .= ' AND s.symbol_type IN (' . implode(', ', $typeConditions) . ')';
+        }
+
+        $sql .= <<<SQL
+         AND (
+                s.fqn = :term
+                OR s.name = :term
+                OR s.fqn LIKE :like
+                OR s.name LIKE :like
+                OR json_extract(s.metadata_json, '$.label') LIKE :like
+                OR json_extract(s.signature_json, '$.class') = :term
+                OR json_extract(s.signature_json, '$.class') LIKE :like
+                OR json_extract(s.signature_json, '$.path') = :term
+                OR json_extract(s.signature_json, '$.path') LIKE :like
+                OR json_extract(s.signature_json, '$.controller') = :term
+                OR json_extract(s.signature_json, '$.controller') LIKE :like
+                OR json_extract(s.metadata_json, '$.configure_route') = :term
+                OR json_extract(s.metadata_json, '$.base_theme') = :term
+                OR json_extract(s.metadata_json, '$.route_name') = :term
+                OR json_extract(s.metadata_json, '$.base_route') = :term
+                OR json_extract(s.metadata_json, '$.parent') = :term
+                OR json_extract(s.metadata_json, '$.parent_id') = :term
+                OR EXISTS (
+                    SELECT 1
+                    FROM json_each(COALESCE(s.metadata_json, '{}'), '$.mentioned_extensions')
+                    WHERE json_each.value = :term
+                )
+                OR EXISTS (
+                    SELECT 1
+                    FROM json_each(COALESCE(s.metadata_json, '{}'), '$.dependency_targets')
+                    WHERE json_each.value = :term
+                )
+                OR EXISTS (
+                    SELECT 1
+                    FROM json_each(COALESCE(s.metadata_json, '{}'), '$.route_refs')
+                    WHERE json_each.value = :term
+                )
+                OR EXISTS (
+                    SELECT 1
+                    FROM json_each(COALESCE(s.metadata_json, '{}'), '$.install')
+                    WHERE json_each.value = :term
+                )
+                OR EXISTS (
+                    SELECT 1
+                    FROM json_each(COALESCE(s.metadata_json, '{}'), '$.recipes')
+                    WHERE json_each.value = :term
+                )
+                OR EXISTS (
+                    SELECT 1
+                    FROM json_each(COALESCE(s.signature_json, '{}'), '$.dependencies')
+                    WHERE json_each.value = :term
+                )
+                OR EXISTS (
+                    SELECT 1
+                    FROM json_each(COALESCE(s.signature_json, '{}'), '$.dependencies.module')
+                    WHERE json_each.value = :term
+                )
+                OR EXISTS (
+                    SELECT 1
+                    FROM json_each(COALESCE(s.signature_json, '{}'), '$.dependencies.theme')
+                    WHERE json_each.value = :term
+                )
+                OR EXISTS (
+                    SELECT 1
+                    FROM json_each(COALESCE(s.signature_json, '{}'), '$.dependencies.config')
+                    WHERE json_each.value = :term
+                )
+            )
+            ORDER BY s.symbol_type, s.fqn
+            LIMIT {$limit}
+        SQL;
+
+        return $this->database->query($sql, $params)->fetchAll();
     }
 
     /**
@@ -455,5 +793,19 @@ class DatabaseApi
                 yield $row;
             }
         }
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function decodeJsonMap(mixed $json): array
+    {
+        if (!is_string($json) || $json === '') {
+            return [];
+        }
+
+        $decoded = json_decode($json, true);
+
+        return is_array($decoded) ? $decoded : [];
     }
 }

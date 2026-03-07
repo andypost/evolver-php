@@ -1,0 +1,87 @@
+{% extends "layout.twig" %}
+
+{% block content %}
+    <section class="hero hero-compact">
+        <div>
+            <p class="eyebrow">Task Queue</p>
+            <h1>Worker Jobs</h1>
+        </div>
+    </section>
+
+    <section class="panel">
+        <div class="panel-head">
+            <h2>Active & Queued</h2>
+            <span class="count">{{ active_jobs|length }}</span>
+        </div>
+        {% if active_jobs %}
+            <ul class="job-list">
+                {% for job in active_jobs %}
+                    <li class="job-item">
+                        <div class="job-meta">
+                            <strong>#{{ job.id }}</strong>
+                            <span class="badge">{{ job.kind }}</span>
+                            <span class="status-tag status-{{ job.status }}">{{ job.status }}</span>
+                        </div>
+                        <div class="job-progress">
+                            {% if job.progress_total > 0 %}
+                                <div class="progress-info">
+                                    <span>{{ job.progress_label }}</span>
+                                    <span>{{ job.progress_current }}/{{ job.progress_total }}</span>
+                                </div>
+                                <progress value="{{ job.progress_current }}" max="{{ job.progress_total }}"></progress>
+                            {% endif %}
+                        </div>
+                        <div class="job-actions">
+                            {% if job.payload.scan_run_id %}
+                                <a href="/runs/{{ job.payload.scan_run_id }}" class="button button-small">View Run</a>
+                            {% elseif job.kind == 'diff_versions' and job.payload.from and job.payload.to %}
+                                <a href="/versions/diff/{{ job.payload.from }}/{{ job.payload.to }}" class="button button-small">View Diff</a>
+                            {% endif %}
+                        </div>
+                    </li>
+                {% endfor %}
+            </ul>
+        {% else %}
+            <p class="empty">No active jobs at the moment.</p>
+        {% endif %}
+    </section>
+
+    <section class="panel">
+        <div class="panel-head">
+            <h2>Recently Completed</h2>
+        </div>
+        {% if recent_jobs %}
+            <table class="table">
+                <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Kind</th>
+                    <th>Status</th>
+                    <th>Duration</th>
+                    <th>Action</th>
+                </tr>
+                </thead>
+                <tbody>
+                {% for job in recent_jobs %}
+                    <tr>
+                        <td>#{{ job.id }}</td>
+                        <td><code>{{ job.kind }}</code></td>
+                        <td><span class="status-tag status-{{ job.status }}">{{ job.status }}</span></td>
+                        <td class="muted">{{ job.updated_at|date('H:i:s') }}</td>
+                        <td>
+                            {% if job.payload.scan_run_id %}
+                                <a href="/runs/{{ job.payload.scan_run_id }}" class="button button-small">View Run</a>
+                            {% elseif job.kind == 'diff_versions' and job.payload.from and job.payload.to %}
+                                <a href="/versions/diff/{{ job.payload.from }}/{{ job.payload.to }}" class="button button-small">View Diff</a>
+                            {% endif %}
+                        </td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        {% else %}
+            <p class="empty">No job history found.</p>
+        {% endif %}
+    </section>
+
+{% endblock %}

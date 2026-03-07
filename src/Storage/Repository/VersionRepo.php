@@ -47,6 +47,13 @@ class VersionRepo
         return $row ?: null;
     }
 
+    #[\NoDiscard]
+    public function findById(int $id): ?array
+    {
+        $row = $this->db->query('SELECT * FROM versions WHERE id = :id', ['id' => $id])->fetch();
+        return $row ?: null;
+    }
+
     public function updateCounts(int $id, int $fileCount, int $symbolCount): int
     {
         return $this->db->execute(
