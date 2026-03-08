@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace DrupalEvolver\Tests\Unit\Storage;
 
+use DrupalEvolver\Pattern\QueryGenerator;
 use DrupalEvolver\Storage\DatabaseApi;
 use DrupalEvolver\Symbol\SymbolType;
 use PHPUnit\Framework\TestCase;
@@ -729,6 +730,69 @@ class DatabaseApiTest extends TestCase
         $this->assertSame(1, $summary['auto_fixable']);
         $this->assertSame(1, $summary['by_change_type']['plugin_annotation_to_attribute']);
         $this->assertSame(1, $summary['by_category']['Modernization']);
+    }
+
+    public function testCountStaleQueryMatchesForRun(): void
+    {
+        $projectId = $this->api->projects()->create('test', '/tmp/test', 'module', '10.2.0');
+        $fromId = $this->api->versions()->create('10.2.0', 10, 2, 0);
+        $toId = $this->api->versions()->create('10.3.0', 10, 3, 0);
+
+        $freshChangeId = $this->api->changes()->create([
+            'from_version_id' => $fromId,
+            'to_version_id' => $toId,
+            'language' => 'php',
+            'change_type' => 'function_removed',
+            'severity' => 'breaking',
+            'old_fqn' => 'fresh_fn',
+            'query_version' => QueryGenerator::QUERY_VERSION,
+        ]);
+        $staleChangeId = $this->api->changes()->create([
+            'from_version_id' => $fromId,
+            'to_version_id' => $toId,
+            'language' => 'php',
+            'change_type' => 'function_removed',
+            'severity' => 'breaking',
+            'old_fqn' => 'stale_fn',
+            'query_version' => QueryGenerator::QUERY_VERSION - 1,
+        ]);
+
+        $runId = $this->api->scanRuns()->create(
+            $projectId,
+            'main',
+            null,
+            null,
+            '10.2.0',
+            '10.3.0',
+            'completed',
+        );
+
+        (void) $this->api->matches()->create([
+            'project_id' => $projectId,
+            'scan_run_id' => $runId,
+            'change_id' => $freshChangeId,
+            'file_path' => 'src/Fresh.php',
+            'line_start' => 10,
+            'matched_source' => 'fresh_fn',
+        ]);
+        (void) $this->api->matches()->create([
+            'project_id' => $projectId,
+            'scan_run_id' => $runId,
+            'change_id' => $staleChangeId,
+            'file_path' => 'src/Stale.php',
+            'line_start' => 12,
+            'matched_source' => 'stale_fn',
+        ]);
+
+        $stored = $this->api->db()->query(
+            'SELECT id, query_version FROM changes WHERE id IN (:fresh, :stale) ORDER BY id',
+            ['fresh' => $freshChangeId, 'stale' => $staleChangeId]
+        )->fetchAll();
+        $this->assertSame((string) QueryGenerator::QUERY_VERSION, (string) $stored[0]['query_version']);
+        $this->assertSame((string) (QueryGenerator::QUERY_VERSION - 1), (string) $stored[1]['query_version']);
+
+        $count = $this->api->countStaleQueryMatchesForRun($runId, QueryGenerator::QUERY_VERSION);
+        $this->assertSame(1, $count);
     }
 
     private function createSymbol(array $data): int

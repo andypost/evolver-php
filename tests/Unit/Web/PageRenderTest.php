@@ -65,9 +65,19 @@ final class PageRenderTest extends UiTestCase
                 'source_type' => 'local_path',
             ],
             'branches' => [
-                ['id' => 1, 'branch_name' => 'main', 'is_default' => 1, 'latest_run' => null],
+                ['id' => 1, 'branch_name' => 'main', 'is_default' => 1, 'latest_run' => ['id' => 1, 'target_core_version' => '11.0.0', 'from_core_version' => '10.2.0']],
             ],
-            'runs' => [],
+            'runs' => [
+                [
+                    'id' => 1,
+                    'branch_name' => 'main',
+                    'from_core_version' => '10.2.0',
+                    'target_core_version' => '11.0.0',
+                    'status' => 'completed',
+                    'match_count' => 5,
+                    'created_at' => '2026-03-08 10:00:00',
+                ],
+            ],
             'versions' => [
                 ['id' => 1, 'tag' => '10.2.0'],
                 ['id' => 2, 'tag' => '11.0.0'],
@@ -76,6 +86,7 @@ final class PageRenderTest extends UiTestCase
 
         $this->assertStringContainsString('mymodule', $html);
         $this->assertStringContainsString('drupal/mymodule', $html);
+        $this->assertStringContainsString('/runs/1/plan', $html);
     }
 
     public function testJobsPageRenders(): void

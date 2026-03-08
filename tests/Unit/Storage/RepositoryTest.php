@@ -9,6 +9,7 @@ use DrupalEvolver\Storage\Repository\ChangeRepo;
 use DrupalEvolver\Storage\Repository\FileRepo;
 use DrupalEvolver\Storage\Repository\MatchRepo;
 use DrupalEvolver\Storage\Repository\ProjectRepo;
+use DrupalEvolver\Storage\Repository\ScanRunRepo;
 use DrupalEvolver\Storage\Repository\SymbolRepo;
 use DrupalEvolver\Storage\Repository\VersionRepo;
 use DrupalEvolver\Storage\Schema;
@@ -189,9 +190,20 @@ class RepositoryTest extends TestCase
             'old_fqn' => 'test_func',
         ]);
 
+        $scanRunRepo = new ScanRunRepo($this->db);
+        $scanRunId = $scanRunRepo->create(
+            $projectId,
+            'main',
+            null,
+            '/var/tmp/materialized-run',
+            '10.2.0',
+            '10.3.0'
+        );
+
         $matchRepo = new MatchRepo($this->db);
         $matchId = $matchRepo->save([
             'project_id' => $projectId,
+            'scan_run_id' => $scanRunId,
             'change_id' => $changeId,
             'file_path' => 'src/MyService.php',
             'line_start' => 45,
@@ -205,6 +217,7 @@ class RepositoryTest extends TestCase
 
         $sameMatchId = $matchRepo->save([
             'project_id' => $projectId,
+            'scan_run_id' => $scanRunId,
             'change_id' => $changeId,
             'file_path' => 'src/MyService.php',
             'line_start' => 46,
@@ -230,6 +243,7 @@ class RepositoryTest extends TestCase
 
         $matchWithoutOffsetsId = $matchRepo->save([
             'project_id' => $projectId,
+            'scan_run_id' => $scanRunId,
             'change_id' => $changeId,
             'file_path' => 'src/Legacy.php',
             'line_start' => 10,
@@ -238,6 +252,7 @@ class RepositoryTest extends TestCase
         ]);
         $sameMatchWithoutOffsetsId = $matchRepo->save([
             'project_id' => $projectId,
+            'scan_run_id' => $scanRunId,
             'change_id' => $changeId,
             'file_path' => 'src/Legacy.php',
             'line_start' => 11,
@@ -255,6 +270,11 @@ class RepositoryTest extends TestCase
         $this->assertSame(-1, (int) $legacyMatches[0]['byte_start']);
         $this->assertSame(-1, (int) $legacyMatches[0]['byte_end']);
         $this->assertSame('legacy_call_updated()', $legacyMatches[0]['matched_source']);
+
+        $matchWithProject = $matchRepo->findByIdWithProject($matchId);
+        $this->assertNotNull($matchWithProject);
+        $this->assertSame('/var/www/mymodule', $matchWithProject['project_path']);
+        $this->assertSame('/var/tmp/materialized-run', $matchWithProject['run_source_path']);
 
         $this->assertSame(1, $matchRepo->updateStatus($matchId, 'pending'));
         $pending = $matchRepo->findPending($projectId);

@@ -15,6 +15,7 @@ use Amp\Http\Server\Router;
 use Amp\Http\Server\SocketHttpServer;
 use Amp\Http\Server\StaticContent\DocumentRoot;
 use Amp\Socket\InternetAddress;
+use DrupalEvolver\Pattern\QueryGenerator;
 use DrupalEvolver\Project\ManagedProjectService;
 use DrupalEvolver\Queue\JobQueue;
 use DrupalEvolver\Scanner\RunComparisonService;
@@ -447,6 +448,7 @@ final class WebServer
         // Group matches by extension and category
         $byExtension = $this->api->getMatchesGroupedByExtension($runId);
         $byCategory = $this->api->getMatchesGroupedByCategory($runId);
+        $staleQueryMatchCount = $this->api->countStaleQueryMatchesForRun($runId, QueryGenerator::QUERY_VERSION);
 
         return $this->html('run-detail.twig', [
             'project' => $project,
@@ -456,6 +458,8 @@ final class WebServer
             'by_extension' => $byExtension,
             'by_category' => $byCategory,
             'logs' => $logs,
+            'stale_query_match_count' => $staleQueryMatchCount,
+            'query_version' => QueryGenerator::QUERY_VERSION,
         ]);
     }
 
@@ -472,13 +476,17 @@ final class WebServer
             return $this->text('Project not found.', HttpStatus::NOT_FOUND);
         }
 
-        $plan = $this->api->getProjectUpgradePlan($runId, (int) $project['id']);
+        $overview = $this->api->getProjectUpgradeOverview($runId, (int) $project['id']);
+        $staleQueryMatchCount = $this->api->countStaleQueryMatchesForRun($runId, QueryGenerator::QUERY_VERSION);
         
         return $this->html('run-plan.twig', [
             'project' => $project,
             'run' => $run,
             'summary' => $this->api->summarizeScanRun($runId),
-            'plan' => $plan,
+            'plan' => $overview['plan'],
+            'graph' => $overview['graph'],
+            'stale_query_match_count' => $staleQueryMatchCount,
+            'query_version' => QueryGenerator::QUERY_VERSION,
         ]);
     }
 
@@ -551,6 +559,7 @@ final class WebServer
         }
 
         $filePath = (string) ($match['file_path'] ?? '');
+        $runSourcePath = (string) ($match['run_source_path'] ?? '');
         $projectPath = (string) ($match['project_path'] ?? '');
         $lineStart = max(1, (int) ($match['line_start'] ?? 1));
         $lineEnd = max($lineStart, (int) ($match['line_end'] ?? $lineStart));
@@ -561,7 +570,7 @@ final class WebServer
         $displayEnd = $lineEnd + $contextLines;
 
         // Resolve full file path
-        $fullPath = $this->resolveProjectFilePath($projectPath, (string) ($match['project_source_type'] ?? ''), $filePath);
+        $fullPath = $this->resolveProjectFilePath([$runSourcePath, $projectPath], $filePath);
 
         if ($fullPath === null || !is_file($fullPath)) {
             return $this->json([
@@ -585,23 +594,100 @@ final class WebServer
         ]);
     }
 
-    private function resolveProjectFilePath(string $projectPath, string $sourceType, string $relativePath): ?string
+    /**
+     * @param list<string> $basePaths
+     */
+    private function resolveProjectFilePath(array $basePaths, string $relativePath): ?string
     {
-        // For git_remote projects, the project_path is the worktree path
-        // For local_path projects, the project_path is the root directory
-        $basePath = $projectPath;
+        $candidates = [];
 
-        // Handle cases where relative_path might be absolute
-        if (strpos($relativePath, '/') === 0) {
-            $fullPath = $relativePath;
+        if ($this->isAbsolutePath($relativePath)) {
+            $candidates = $this->expandSourcePathAliases($relativePath);
         } else {
-            $fullPath = $basePath . '/' . $relativePath;
+            foreach ($basePaths as $basePath) {
+                if ($basePath === '') {
+                    continue;
+                }
+
+                foreach ($this->expandSourcePathAliases($basePath) as $candidateBasePath) {
+                    $candidates[] = $candidateBasePath . '/' . $relativePath;
+                }
+            }
         }
 
-        // Normalize the path
-        $fullPath = str_replace('//', '/', $fullPath);
+        foreach (array_values(array_unique($candidates)) as $candidate) {
+            $normalized = preg_replace('#/+#', '/', $candidate) ?: $candidate;
+            $resolved = realpath($normalized);
+            if ($resolved !== false && is_file($resolved)) {
+                return $resolved;
+            }
+        }
 
-        return realpath($fullPath) ?: null;
+        return null;
+    }
+
+    /**
+     * One-off `make evr` scans mount external sources at /mnt/project, while the
+     * long-running web container in compose typically has stable read-only mounts
+     * like /mnt/drupal. Allow alias remapping so previews can resolve the same
+     * source tree after the scan has completed.
+     *
+     * @return list<string>
+     */
+    private function expandSourcePathAliases(string $path): array
+    {
+        $paths = [$path];
+
+        foreach ($this->sourcePathAliases() as $from => $to) {
+            if ($path === $from || str_starts_with($path, $from . '/')) {
+                $paths[] = $to . substr($path, strlen($from));
+            }
+        }
+
+        return array_values(array_unique($paths));
+    }
+
+    /**
+     * @return array<string, string>
+     */
+    private function sourcePathAliases(): array
+    {
+        static $aliases = null;
+        if ($aliases !== null) {
+            return $aliases;
+        }
+
+        $aliases = [];
+        $configured = $_ENV['EVOLVER_SOURCE_PATH_ALIASES']
+            ?? getenv('EVOLVER_SOURCE_PATH_ALIASES')
+            ?: '';
+
+        if ($configured !== '') {
+            foreach (preg_split('/[\r\n,;]+/', $configured) ?: [] as $entry) {
+                $entry = trim($entry);
+                if ($entry === '' || !str_contains($entry, '=')) {
+                    continue;
+                }
+
+                [$from, $to] = array_map('trim', explode('=', $entry, 2));
+                if ($from !== '' && $to !== '') {
+                    $aliases[$from] = $to;
+                }
+            }
+        }
+
+        // Compose mounts the sibling Drupal checkout at /mnt/drupal, while
+        // one-off `make evr` scans use /mnt/project for the same source tree.
+        if (is_dir('/mnt/drupal') && !isset($aliases['/mnt/project'])) {
+            $aliases['/mnt/project'] = '/mnt/drupal';
+        }
+
+        return $aliases;
+    }
+
+    private function isAbsolutePath(string $path): bool
+    {
+        return $path !== '' && $path[0] === '/';
     }
 
     /**

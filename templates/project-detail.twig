@@ -206,6 +206,7 @@
                     <th>Status</th>
                     <th>Issues</th>
                     <th>Created</th>
+                    <th>Actions</th>
                 </tr>
                 </thead>
                 <tbody>
@@ -217,6 +218,14 @@
                         <td><span data-run-status class="status-tag status-{{ run.status }}">{{ run.status }}</span></td>
                         <td>{{ run.match_count }}</td>
                         <td>{{ run.created_at }}</td>
+                        <td>
+                            <div class="pill-list">
+                                <a href="/runs/{{ run.id }}" class="meta-link">Results</a>
+                                {% if run.status == 'completed' %}
+                                    <a href="/runs/{{ run.id }}/plan" class="meta-link">Plan</a>
+                                {% endif %}
+                            </div>
+                        </td>
                     </tr>
                 {% endfor %}
                 </tbody>

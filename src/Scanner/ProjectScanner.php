@@ -6,6 +6,7 @@ namespace DrupalEvolver\Scanner;
 
 use DrupalEvolver\Adapter\DrupalCoreAdapter;
 use DrupalEvolver\Indexer\FileClassifier;
+use DrupalEvolver\Pattern\QueryGenerator;
 use DrupalEvolver\Storage\Database;
 use DrupalEvolver\Storage\DatabaseApi;
 use DrupalEvolver\Storage\Repository\MatchRepo;
@@ -140,6 +141,7 @@ final class ProjectScanner
         }
 
         $changes = $this->api->changes()->findForUpgradePath((int) $fromVer['id'], (int) $toVer['id']);
+        $this->assertCurrentChangeQueries($changes, $fromVersion, $targetVersion);
         $output?->writeln(sprintf('Loaded <info>%d</info> changes to scan for', count($changes)));
 
         $this->api->projects()->updateCoreVersion($projectId, $fromVersion);
@@ -208,6 +210,32 @@ final class ProjectScanner
         $output?->writeln(sprintf('Found <info>%d</info> matches in project <info>%s</info>', $matchCount, $projectName));
 
         return $matchCount;
+    }
+
+    /**
+     * @param list<array<string, mixed>> $changes
+     */
+    private function assertCurrentChangeQueries(array $changes, string $fromVersion, string $targetVersion): void
+    {
+        $staleCount = 0;
+
+        foreach ($changes as $change) {
+            if ((int) ($change['query_version'] ?? 0) !== QueryGenerator::QUERY_VERSION) {
+                $staleCount++;
+            }
+        }
+
+        if ($staleCount === 0) {
+            return;
+        }
+
+        throw new \RuntimeException(sprintf(
+            'Stored change queries are outdated for the %s -> %s upgrade path (%d stale change%s). Re-run diff for the affected version pair(s) before scanning.',
+            $fromVersion,
+            $targetVersion,
+            $staleCount,
+            $staleCount === 1 ? '' : 's'
+        ));
     }
 
     private function scanSequential(
@@ -427,15 +455,17 @@ final class ProjectScanner
                 }
             }
 
+            // Phase 1: Collect matches using tree-sitter queries
             $tree = $parser->parse($content, $language);
             $root = $tree->rootNode();
 
             if ($relevantChanges !== []) {
-                foreach ($matchCollector->collectMatches($root, $content, $language, $relevantChanges) as $match) {
-                    $match['project_id'] = $projectId;
-                    $match['scan_run_id'] = $scanRunId;
-                    $match['file_path'] = $relativePath;
-                    $matches[] = $match;
+                foreach ($matchCollector->collectMatches($root, $content, $language, $relevantChanges) as $matchResult) {
+                    $matches[] = array_merge([
+                        'project_id' => $projectId,
+                        'scan_run_id' => $scanRunId,
+                        'file_path' => $relativePath,
+                    ], $matchResult->toArray());
                 }
             }
 

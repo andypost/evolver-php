@@ -118,6 +118,7 @@ Stores detected changes between two versions.
 | new_fqn | TEXT | FQN after change (renames) |
 | diff_json | TEXT | Structured diff details |
 | ts_query | TEXT | Tree-sitter query to find affected code |
+| query_version | INTEGER | Query generator version used to produce `ts_query` |
 | fix_template | TEXT | JSON fix template (nullable) |
 | migration_hint | TEXT | Human-readable migration guidance |
 | confidence | REAL | 0.0–1.0, default 1.0 |
@@ -215,9 +216,9 @@ Stores metadata about the database itself.
 | key | TEXT PK | Metadata key |
 | value | TEXT | Metadata value |
 
-Currently stores: `schema_version` = `"6"`
+Currently stores: `schema_version` = `"7"`
 
-Schema version 6 forward-migrates older databases by backfilling `versions.weight`, normalizing `NULL` match offsets to `-1`, deduplicating legacy match rows, deduplicating projects by path before adding the unique index, and creating project-scoped tables used for managed-project scans and upgrade planning.
+Schema version 7 includes all version 6 migrations and adds `changes.query_version` to support stale query detection during scan.
 
 ## Upgrade Path Query
 

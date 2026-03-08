@@ -60,6 +60,17 @@ class FFIBinding
             const TSQueryCapture *captures;
         } TSQueryMatch;
 
+        typedef enum {
+            TSQueryPredicateStepTypeDone,
+            TSQueryPredicateStepTypeCapture,
+            TSQueryPredicateStepTypeString
+        } TSQueryPredicateStepType;
+
+        typedef struct {
+            TSQueryPredicateStepType type;
+            uint32_t value_id;
+        } TSQueryPredicateStep;
+
         // Parser
         TSParser *ts_parser_new(void);
         void ts_parser_delete(TSParser *self);
@@ -98,8 +109,11 @@ class FFIBinding
         // Query
         TSQuery *ts_query_new(const TSLanguage *language, const char *source, uint32_t source_len, uint32_t *error_offset, uint32_t *error_type);
         void ts_query_delete(TSQuery *self);
+        uint32_t ts_query_pattern_count(const TSQuery *self);
         uint32_t ts_query_capture_count(const TSQuery *self);
         const char *ts_query_capture_name_for_id(const TSQuery *self, uint32_t index, uint32_t *length);
+        const TSQueryPredicateStep *ts_query_predicates_for_pattern(const TSQuery *self, uint32_t pattern_index, uint32_t *length);
+        const char *ts_query_string_value_for_id(const TSQuery *self, uint32_t index, uint32_t *length);
 
         // Query Cursor
         TSQueryCursor *ts_query_cursor_new(void);

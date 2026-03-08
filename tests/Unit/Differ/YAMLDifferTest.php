@@ -31,12 +31,12 @@ class YAMLDifferTest extends TestCase
         $changes = $this->differ->findRemovedChanges($removed);
 
         $this->assertCount(6, $changes);
-        $this->assertSame('service_removed', $changes[0]['change_type']);
-        $this->assertSame('route_removed', $changes[1]['change_type']);
-        $this->assertSame('permission_removed', $changes[2]['change_type']);
-        $this->assertSame('config_key_removed', $changes[3]['change_type']);
-        $this->assertSame('module_info_removed', $changes[4]['change_type']);
-        $this->assertSame('config_object_removed', $changes[5]['change_type']);
+        $this->assertSame('service_removed', $changes[0]->changeType);
+        $this->assertSame('route_removed', $changes[1]->changeType);
+        $this->assertSame('permission_removed', $changes[2]->changeType);
+        $this->assertSame('config_key_removed', $changes[3]->changeType);
+        $this->assertSame('module_info_removed', $changes[4]->changeType);
+        $this->assertSame('config_object_removed', $changes[5]->changeType);
     }
 
     public function testFindRenameChangesForService(): void
@@ -64,10 +64,10 @@ class YAMLDifferTest extends TestCase
         $changes = $this->differ->findRenameChanges($removed, $added);
 
         $this->assertCount(1, $changes);
-        $this->assertSame('service_renamed', $changes[0]['change_type']);
-        $this->assertSame('old.service', $changes[0]['old']['fqn']);
-        $this->assertSame('new.service', $changes[0]['new']['fqn']);
-        $this->assertGreaterThanOrEqual(0.78, $changes[0]['confidence']);
+        $this->assertSame('service_renamed', $changes[0]->changeType);
+        $this->assertSame('old.service', $changes[0]->oldSymbol['fqn']);
+        $this->assertSame('new.service', $changes[0]->newSymbol['fqn']);
+        $this->assertGreaterThanOrEqual(0.78, $changes[0]->confidence);
     }
 
     public function testFindChangedChangesForServiceClassChange(): void
@@ -92,9 +92,9 @@ class YAMLDifferTest extends TestCase
         $changes = $this->differ->findChangedChanges($changed);
 
         $this->assertCount(1, $changes);
-        $this->assertSame('service_class_changed', $changes[0]['change_type']);
-        $this->assertNotNull($changes[0]['diff_json']);
-        $details = json_decode((string) $changes[0]['diff_json'], true);
+        $this->assertSame('service_class_changed', $changes[0]->changeType);
+        $this->assertNotNull($changes[0]->diffDetails);
+        $details = $changes[0]->diffDetails;
         $this->assertSame('Drupal\\Core\\OldClass', $details['old_class']);
         $this->assertSame('Drupal\\Core\\NewClass', $details['new_class']);
     }
@@ -121,8 +121,8 @@ class YAMLDifferTest extends TestCase
         $changes = $this->differ->findChangedChanges($changed);
 
         $this->assertCount(1, $changes);
-        $this->assertSame('route_changed', $changes[0]['change_type']);
-        $details = json_decode((string) $changes[0]['diff_json'], true);
+        $this->assertSame('route_changed', $changes[0]->changeType);
+        $details = $changes[0]->diffDetails;
         $this->assertSame('/old', $details['old_path']);
         $this->assertSame('/new', $details['new_path']);
     }
@@ -149,8 +149,8 @@ class YAMLDifferTest extends TestCase
         $changes = $this->differ->findChangedChanges($changed);
 
         $this->assertCount(1, $changes);
-        $this->assertSame('module_dependencies_changed', $changes[0]['change_type']);
-        $details = json_decode((string) $changes[0]['diff_json'], true);
+        $this->assertSame('module_dependencies_changed', $changes[0]->changeType);
+        $details = $changes[0]->diffDetails;
         $this->assertSame(['drupal:views'], $details['added_dependencies']);
         $this->assertSame(['drupal:node'], $details['removed_dependencies']);
     }
@@ -177,8 +177,8 @@ class YAMLDifferTest extends TestCase
         $changes = $this->differ->findChangedChanges($changed);
 
         $this->assertCount(1, $changes);
-        $this->assertSame('config_object_changed', $changes[0]['change_type']);
-        $details = json_decode((string) $changes[0]['diff_json'], true);
+        $this->assertSame('config_object_changed', $changes[0]->changeType);
+        $details = $changes[0]->diffDetails;
         $this->assertSame(['mail'], $details['added_top_level_keys']);
         $this->assertContains('status', $details['changed_top_level_keys']);
     }
@@ -205,8 +205,8 @@ class YAMLDifferTest extends TestCase
         $changes = $this->differ->findChangedChanges($changed);
 
         $this->assertCount(1, $changes);
-        $this->assertSame('recipe_install_changed', $changes[0]['change_type']);
-        $details = json_decode((string) $changes[0]['diff_json'], true);
+        $this->assertSame('recipe_install_changed', $changes[0]->changeType);
+        $details = $changes[0]->diffDetails;
         $this->assertSame(['node'], $details['added_install']);
         $this->assertSame([], $details['removed_install']);
     }

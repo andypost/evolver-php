@@ -681,6 +681,24 @@ class DatabaseApi
         )->fetchAll();
     }
 
+    #[\NoDiscard]
+    public function countStaleQueryMatchesForRun(int $scanRunId, int $queryVersion): int
+    {
+        $row = $this->database->query(
+            "SELECT COUNT(*) AS total
+             FROM code_matches cm
+             JOIN changes c ON cm.change_id = c.id
+             WHERE cm.scan_run_id = :scan_run_id
+               AND CAST(COALESCE(c.query_version, 0) AS INTEGER) <> CAST(:query_version AS INTEGER)",
+            [
+                'scan_run_id' => $scanRunId,
+                'query_version' => $queryVersion,
+            ]
+        )->fetch();
+
+        return (int) ($row['total'] ?? 0);
+    }
+
     /**
      * Aggregate summary for a scan run, used by run detail pages and completion bookkeeping.
      *
@@ -760,76 +778,42 @@ class DatabaseApi
     #[\NoDiscard]
     public function getProjectUpgradePlan(int $scanRunId, int $projectId): array
     {
-        $extensions = $this->projectExtensions()->findByProject($projectId);
-        $matchesGrouped = $this->getMatchesGroupedByExtension($scanRunId);
+        return $this->getProjectUpgradeOverview($scanRunId, $projectId)['plan'];
+    }
 
-        $plan = [];
-        $dependencyMap = [];
+    /**
+     * Build a project-level extension dependency graph with direct and upstream impact metrics.
+     *
+     * @return list<array>
+     */
+    #[\NoDiscard]
+    public function getProjectExtensionGraph(int $scanRunId, int $projectId): array
+    {
+        return $this->getProjectUpgradeOverview($scanRunId, $projectId)['graph'];
+    }
 
-        // Build base map
-        foreach ($extensions as $ext) {
-            $machineName = $ext['machine_name'];
-            $deps = json_decode((string) $ext['dependencies'], true) ?: [];
-            
-            // Filter dependencies to only those that are in this project
-            // to build an internal graph
-            $internalDeps = [];
-            foreach ($deps as $dep) {
-                foreach ($extensions as $otherExt) {
-                    if ($otherExt['machine_name'] === $dep) {
-                        $internalDeps[] = $dep;
-                        break;
-                    }
-                }
-            }
+    /**
+     * @return array{plan: list<array>, graph: list<array>}
+     */
+    #[\NoDiscard]
+    public function getProjectUpgradeOverview(int $scanRunId, int $projectId): array
+    {
+        $nodes = $this->buildProjectExtensionNodes($scanRunId, $projectId);
+        return [
+            'plan' => $this->sortProjectExtensionPlan($nodes),
+            'graph' => $this->sortProjectExtensionGraph($nodes),
+        ];
+    }
 
-            // Find matching path group (e.g. modules/custom/my_module)
-            $extMatches = null;
-            $extPath = null;
-            foreach ($matchesGrouped as $path => $data) {
-                if (basename($path) === $machineName) {
-                    $extMatches = $data;
-                    $extPath = $path;
-                    break;
-                }
-            }
-
-            $plan[$machineName] = [
-                'machine_name' => $machineName,
-                'label' => $ext['label'] ?? $machineName,
-                'type' => $ext['extension_type'],
-                'path' => $extPath ?? $ext['file_path'],
-                'dependencies' => $internalDeps,
-                'match_count' => $extMatches ? $extMatches['count'] : 0,
-                'by_severity' => $extMatches ? $extMatches['by_severity'] : [],
-                'matches' => $extMatches ? $extMatches['matches'] : [],
-                'dependents' => [],
-                'score' => 0,
-            ];
-            
-            $dependencyMap[$machineName] = $internalDeps;
+    /**
+     * @param array<string, array<string, mixed>> $plan
+     * @return list<array>
+     */
+    private function sortProjectExtensionPlan(array $plan): array
+    {
+        if ($plan === []) {
+            return [];
         }
-
-        // Calculate dependents
-        foreach ($dependencyMap as $name => $deps) {
-            foreach ($deps as $dep) {
-                if (isset($plan[$dep])) {
-                    $plan[$dep]['dependents'][] = $name;
-                }
-            }
-        }
-
-        // Calculate scores
-        foreach ($plan as &$item) {
-            $score = 0;
-            foreach ($item['by_severity'] as $sev => $cnt) {
-                if ($sev === 'breaking') $score += ($cnt * 10);
-                elseif ($sev === 'warning' || $sev === 'deprecation') $score += ($cnt * 3);
-                else $score += $cnt;
-            }
-            $item['score'] = $score;
-        }
-        unset($item);
 
         // Kahn's Algorithm for Topological Sort
         $sorted = [];
@@ -870,6 +854,31 @@ class DatabaseApi
         }
 
         return $finalPlan;
+    }
+
+    /**
+     * @param array<string, array<string, mixed>> $nodes
+     * @return list<array>
+     */
+    private function sortProjectExtensionGraph(array $nodes): array
+    {
+        $graph = array_values($nodes);
+
+        usort($graph, function (array $a, array $b): int {
+            $hotspot = $b['hotspot_score'] <=> $a['hotspot_score'];
+            if ($hotspot !== 0) {
+                return $hotspot;
+            }
+
+            $direct = $b['score'] <=> $a['score'];
+            if ($direct !== 0) {
+                return $direct;
+            }
+
+            return $a['machine_name'] <=> $b['machine_name'];
+        });
+
+        return $graph;
     }
 
     public function summarizeScanRun(int $scanRunId): array
@@ -1034,6 +1043,179 @@ class DatabaseApi
             str_contains($changeType, 'css') || str_contains($changeType, 'library') || str_contains($changeType, 'sdc') || str_contains($changeType, 'twig') => 'Frontend',
             default => 'Other',
         };
+    }
+
+    /**
+     * @return array<string, array<string, mixed>>
+     */
+    private function buildProjectExtensionNodes(int $scanRunId, int $projectId): array
+    {
+        $extensions = $this->projectExtensions()->findByProject($projectId);
+        $matchesGrouped = $this->getMatchesGroupedByExtension($scanRunId);
+        $extensionNames = array_column($extensions, 'machine_name');
+        $knownExtensionNames = array_fill_keys($extensionNames, true);
+
+        $nodes = [];
+        foreach ($extensions as $ext) {
+            $machineName = (string) $ext['machine_name'];
+            $deps = json_decode((string) $ext['dependencies'], true) ?: [];
+            $internalDeps = array_values(array_filter(
+                $deps,
+                static fn(mixed $dep): bool => is_string($dep) && isset($knownExtensionNames[$dep])
+            ));
+
+            $matchGroup = $this->resolveProjectExtensionMatchGroup($matchesGrouped, $ext);
+            $matchPath = $matchGroup['path'];
+            $matchData = $matchGroup['data'];
+
+            $nodes[$machineName] = [
+                'machine_name' => $machineName,
+                'label' => $ext['label'] ?? $machineName,
+                'type' => $ext['extension_type'],
+                'path' => $matchPath ?? $this->normalizeProjectExtensionPath((string) ($ext['file_path'] ?? ''), $machineName),
+                'dependencies' => $internalDeps,
+                'match_count' => $matchData['count'] ?? 0,
+                'by_severity' => $matchData['by_severity'] ?? [],
+                'by_category' => $matchData['by_category'] ?? [],
+                'matches' => $matchData['matches'] ?? [],
+                'dependents' => [],
+                'transitive_dependencies' => [],
+                'impact_details' => [],
+                'dependency_match_count' => 0,
+                'dependency_score' => 0,
+                'score' => $this->scoreSeverityBreakdown($matchData['by_severity'] ?? []),
+                'hotspot_score' => 0,
+            ];
+        }
+
+        foreach ($nodes as $name => &$node) {
+            foreach ($node['dependencies'] as $dep) {
+                if (isset($nodes[$dep])) {
+                    $nodes[$dep]['dependents'][] = $name;
+                }
+            }
+        }
+        unset($node);
+
+        foreach (array_keys($nodes) as $name) {
+            $transitiveDependencies = $this->collectTransitiveDependencies($name, $nodes);
+            $impactDetails = [];
+            $dependencyMatchCount = 0;
+            $dependencyScore = 0;
+
+            foreach ($transitiveDependencies as $dep) {
+                $dependencyMatchCount += (int) $nodes[$dep]['match_count'];
+                $dependencyScore += (int) $nodes[$dep]['score'];
+                $impactDetails[] = [
+                    'extension' => $dep,
+                    'match_count' => $nodes[$dep]['match_count'],
+                    'score' => $nodes[$dep]['score'],
+                ];
+            }
+
+            usort($impactDetails, static function (array $a, array $b): int {
+                $score = $b['score'] <=> $a['score'];
+                if ($score !== 0) {
+                    return $score;
+                }
+
+                return $a['extension'] <=> $b['extension'];
+            });
+
+            $nodes[$name]['dependents'] = array_values($nodes[$name]['dependents']);
+            sort($nodes[$name]['dependents']);
+            $nodes[$name]['transitive_dependencies'] = $transitiveDependencies;
+            $nodes[$name]['impact_details'] = $impactDetails;
+            $nodes[$name]['dependency_match_count'] = $dependencyMatchCount;
+            $nodes[$name]['dependency_score'] = $dependencyScore;
+            $nodes[$name]['hotspot_score'] = (int) $nodes[$name]['score'] + $dependencyScore;
+        }
+
+        return $nodes;
+    }
+
+    private function scoreSeverityBreakdown(array $bySeverity): int
+    {
+        $score = 0;
+        foreach ($bySeverity as $severity => $count) {
+            $count = (int) $count;
+            if ($severity === 'breaking') {
+                $score += ($count * 10);
+            } elseif ($severity === 'warning' || $severity === 'deprecation') {
+                $score += ($count * 3);
+            } else {
+                $score += $count;
+            }
+        }
+
+        return $score;
+    }
+
+    /**
+     * @param array<string, array<string, mixed>> $nodes
+     * @return list<string>
+     */
+    private function collectTransitiveDependencies(string $machineName, array $nodes): array
+    {
+        $visited = [];
+        $ordered = [];
+        $stack = $nodes[$machineName]['dependencies'] ?? [];
+
+        while ($stack !== []) {
+            $dep = array_shift($stack);
+            if (!is_string($dep) || isset($visited[$dep]) || !isset($nodes[$dep])) {
+                continue;
+            }
+
+            $visited[$dep] = true;
+            $ordered[] = $dep;
+
+            foreach ($nodes[$dep]['dependencies'] as $childDep) {
+                if (!isset($visited[$childDep])) {
+                    $stack[] = $childDep;
+                }
+            }
+        }
+
+        return $ordered;
+    }
+
+    /**
+     * @param array<string, array<string, mixed>> $matchesGrouped
+     * @param array<string, mixed> $extension
+     * @return array{path: ?string, data: ?array}
+     */
+    private function resolveProjectExtensionMatchGroup(array $matchesGrouped, array $extension): array
+    {
+        $machineName = (string) ($extension['machine_name'] ?? '');
+        $normalizedPath = $this->normalizeProjectExtensionPath((string) ($extension['file_path'] ?? ''), $machineName);
+
+        if ($normalizedPath !== null && isset($matchesGrouped[$normalizedPath])) {
+            return ['path' => $normalizedPath, 'data' => $matchesGrouped[$normalizedPath]];
+        }
+
+        foreach ($matchesGrouped as $path => $data) {
+            if (basename($path) === $machineName) {
+                return ['path' => $path, 'data' => $data];
+            }
+        }
+
+        return ['path' => $normalizedPath, 'data' => null];
+    }
+
+    private function normalizeProjectExtensionPath(string $filePath, string $machineName): ?string
+    {
+        $trimmed = trim($filePath);
+        if ($trimmed === '') {
+            return null;
+        }
+
+        if (str_ends_with($trimmed, '.yml')) {
+            $directory = dirname($trimmed);
+            return $directory === '.' ? $machineName : $directory;
+        }
+
+        return rtrim($trimmed, '/');
     }
 
     /**

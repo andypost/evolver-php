@@ -135,25 +135,25 @@ class VersionDiffer
         $output?->writeln(sprintf("<comment>%d YAML renames found</comment>", count($yamlRenames)));
 
         foreach ($yamlRenames as $rename) {
-            $old = $rename['old'] ?? null;
-            $new = $rename['new'] ?? null;
+            $old = $rename->oldSymbol ?? null;
+            $new = $rename->newSymbol ?? null;
             if (!$old || !$new) continue;
 
             $oldId = $this->symbolId($old);
             if ($oldId !== null) $consumedRemoved[$oldId] = true;
 
-            $changeType = (string) ($rename['change_type'] ?? (SymbolType::valueFromSymbol($old, 'symbol') . '_renamed'));
+            $changeType = $rename->changeType;
             $changes[] = [
                 'from_version_id' => $fromId,
                 'to_version_id' => $toId,
-                'language' => $old['language'],
+                'language' => $old['language'] ?? 'yaml',
                 'change_type' => $changeType,
-                'severity' => $rename['severity'] ?? 'breaking',
+                'severity' => $rename->severity,
                 'old_symbol_id' => $old['id'] ?? null,
                 'new_symbol_id' => $new['id'] ?? null,
                 'old_fqn' => $old['fqn'] ?? null,
                 'new_fqn' => $new['fqn'] ?? null,
-                'confidence' => $rename['confidence'] ?? 0.8,
+                'confidence' => $rename->confidence,
                 'ts_query' => $this->queryGenerator->generate($changeType, $old),
                 'fix_template' => $this->fixTemplateGenerator->generate($changeType, $old, $new),
             ];
@@ -162,22 +162,22 @@ class VersionDiffer
         // 1c. YAML removals.
         $yamlRemoved = $this->yamlDiffer->findRemovedChanges($removedPool);
         foreach ($yamlRemoved as $entry) {
-            $old = $entry['old'] ?? null;
+            $old = $entry->oldSymbol ?? null;
             if (!$old) continue;
 
             $oldId = $this->symbolId($old);
             if ($oldId !== null && isset($consumedRemoved[$oldId])) continue;
 
-            $changeType = (string) ($entry['change_type'] ?? (SymbolType::valueFromSymbol($old, 'symbol') . '_removed'));
+            $changeType = $entry->changeType;
             $changes[] = [
                 'from_version_id' => $fromId,
                 'to_version_id' => $toId,
-                'language' => $old['language'],
+                'language' => $old['language'] ?? 'yaml',
                 'change_type' => $changeType,
-                'severity' => $entry['severity'] ?? 'breaking',
+                'severity' => $entry->severity,
                 'old_symbol_id' => $old['id'] ?? null,
                 'old_fqn' => $old['fqn'] ?? null,
-                'confidence' => $entry['confidence'] ?? 1.0,
+                'confidence' => $entry->confidence,
                 'ts_query' => $this->queryGenerator->generate($changeType, $old),
             ];
         }
@@ -290,21 +290,21 @@ class VersionDiffer
         if (!empty($yamlChangedPairs)) {
             $yamlChanges = $this->yamlDiffer->findChangedChanges($yamlChangedPairs);
             foreach ($yamlChanges as $yamlChange) {
-                $old = $yamlChange['old'] ?? [];
-                $new = $yamlChange['new'] ?? [];
-                $changeType = (string) ($yamlChange['change_type'] ?? 'service_changed');
+                $old = $yamlChange->oldSymbol ?? [];
+                $new = $yamlChange->newSymbol ?? [];
+                $changeType = $yamlChange->changeType;
                 $changes[] = [
                     'from_version_id' => $fromId,
                     'to_version_id' => $toId,
                     'language' => 'yaml',
                     'change_type' => $changeType,
-                    'severity' => $yamlChange['severity'] ?? 'breaking',
+                    'severity' => $yamlChange->severity,
                     'old_symbol_id' => $old['id'] ?? null,
                     'new_symbol_id' => $new['id'] ?? null,
                     'old_fqn' => $old['fqn'] ?? null,
                     'new_fqn' => $new['fqn'] ?? null,
-                    'diff_json' => $yamlChange['diff_json'] ?? null,
-                    'confidence' => $yamlChange['confidence'] ?? 1.0,
+                    'diff_json' => $yamlChange->diffDetails !== null ? json_encode($yamlChange->diffDetails) : null,
+                    'confidence' => $yamlChange->confidence,
                     'ts_query' => $this->queryGenerator->generate($changeType, $old),
                     'fix_template' => $this->fixTemplateGenerator->generate($changeType, $old, $new),
                 ];

@@ -10,7 +10,7 @@ class YAMLDiffer
 {
     /**
      * @param array<int, array<string, mixed>> $removed
-     * @return array<int, array<string, mixed>>
+     * @return array<int, YamlChange>
      */
     public function findRemovedChanges(array $removed): array
     {
@@ -31,12 +31,7 @@ class YAMLDiffer
                 continue;
             }
 
-            $changes[] = [
-                'old' => $symbol,
-                'change_type' => $changeType,
-                'severity' => 'breaking',
-                'confidence' => 1.0,
-            ];
+            $changes[] = YamlChange::breaking($changeType, $symbol);
         }
 
         return $changes;
@@ -45,7 +40,7 @@ class YAMLDiffer
     /**
      * @param array<int, array<string, mixed>> $removed
      * @param array<int, array<string, mixed>> $added
-     * @return array<int, array<string, mixed>>
+     * @return array<int, YamlChange>
      */
     public function findRenameChanges(array $removed, array $added): array
     {
@@ -88,13 +83,13 @@ class YAMLDiffer
             }
 
             $symbolType = SymbolType::fromSymbol($oldSymbol);
-            $changes[] = [
-                'old' => $oldSymbol,
-                'new' => $best,
-                'change_type' => $symbolType === null ? 'symbol_renamed' : $this->renameChangeType($symbolType),
-                'severity' => 'breaking',
-                'confidence' => $bestScore,
-            ];
+            $changes[] = YamlChange::breaking(
+                $symbolType === null ? 'symbol_renamed' : $this->renameChangeType($symbolType),
+                $oldSymbol,
+                $best,
+                null,
+                $bestScore
+            );
         }
 
         return $changes;
@@ -102,7 +97,7 @@ class YAMLDiffer
 
     /**
      * @param array<int, array{old: array<string, mixed>, new: array<string, mixed>}> $changed
-     * @return array<int, array<string, mixed>>
+     * @return array<int, YamlChange>
      */
     public function findChangedChanges(array $changed): array
     {
@@ -121,14 +116,7 @@ class YAMLDiffer
             }
 
             $details = $this->buildDiffDetails($old, $new);
-            $changes[] = [
-                'old' => $old,
-                'new' => $new,
-                'change_type' => $changeType,
-                'severity' => 'breaking',
-                'confidence' => 1.0,
-                'diff_json' => empty($details) ? null : json_encode($details),
-            ];
+            $changes[] = YamlChange::breaking($changeType, $old, $new, $details);
         }
 
         return $changes;
@@ -313,30 +301,34 @@ class YAMLDiffer
         $oldSig = $this->decodeSignature($old);
         $newSig = $this->decodeSignature($new);
 
-        return match ($symbolType) {
-            SymbolType::Service => [
-                'old_class' => $oldSig['class'] ?? null,
-                'new_class' => $newSig['class'] ?? null,
-                'old_arguments' => $oldSig['arguments'] ?? null,
-                'new_arguments' => $newSig['arguments'] ?? null,
-                'old_tags' => $oldSig['tags'] ?? null,
-                'new_tags' => $newSig['tags'] ?? null,
-            ],
-            SymbolType::Route, SymbolType::DrupalRoute => [
-                'old_path' => $oldSig['path'] ?? null,
-                'new_path' => $newSig['path'] ?? null,
-                'old_controller' => $oldSig['controller'] ?? null,
-                'new_controller' => $newSig['controller'] ?? null,
-            ],
-            SymbolType::ModuleInfo, SymbolType::ProfileInfo, SymbolType::ThemeInfo, SymbolType::ThemeEngineInfo => $this->buildInfoDiffDetails($oldSig, $newSig),
-            SymbolType::LinkMenu, SymbolType::LinkTask, SymbolType::LinkAction, SymbolType::LinkContextual => $this->buildStructuredDiffDetails($oldSig, $newSig),
+        $details = match ($symbolType) {
+            SymbolType::Service => YamlDiffDetails::service(
+                $oldSig['class'] ?? null,
+                $newSig['class'] ?? null,
+                $oldSig['arguments'] ?? null,
+                $newSig['arguments'] ?? null,
+                $oldSig['tags'] ?? null,
+                $newSig['tags'] ?? null,
+            ),
+            SymbolType::Route, SymbolType::DrupalRoute => YamlDiffDetails::route(
+                $oldSig['path'] ?? null,
+                $newSig['path'] ?? null,
+                $oldSig['controller'] ?? null,
+                $newSig['controller'] ?? null,
+            ),
+            SymbolType::ModuleInfo, SymbolType::ProfileInfo, SymbolType::ThemeInfo, SymbolType::ThemeEngineInfo => 
+                $this->buildInfoDiffDetails($oldSig, $newSig),
+            SymbolType::LinkMenu, SymbolType::LinkTask, SymbolType::LinkAction, SymbolType::LinkContextual => 
+                $this->buildStructuredDiffDetails($oldSig, $newSig),
             SymbolType::ConfigExport => $this->buildConfigDiffDetails($oldSig, $newSig),
             SymbolType::RecipeManifest => $this->buildRecipeDiffDetails($oldSig, $newSig),
-            default => [
+            default => new YamlDiffDetails([
                 'old_signature' => $oldSig,
                 'new_signature' => $newSig,
-            ],
+            ]),
         };
+
+        return $details->toArray();
     }
 
     /**
@@ -384,78 +376,74 @@ class YAMLDiffer
     /**
      * @param array<string, mixed> $oldSig
      * @param array<string, mixed> $newSig
-     * @return array<string, mixed>
      */
-    private function buildInfoDiffDetails(array $oldSig, array $newSig): array
+    private function buildInfoDiffDetails(array $oldSig, array $newSig): YamlDiffDetails
     {
         $oldDeps = $this->normalizeStringList($oldSig['dependencies'] ?? []);
         $newDeps = $this->normalizeStringList($newSig['dependencies'] ?? []);
 
-        return [
-            'changed_keys' => $this->changedTopLevelKeys($oldSig, $newSig),
-            'old_dependencies' => $oldDeps,
-            'new_dependencies' => $newDeps,
-            'added_dependencies' => array_values(array_diff($newDeps, $oldDeps)),
-            'removed_dependencies' => array_values(array_diff($oldDeps, $newDeps)),
-            'old_configure' => $oldSig['configure'] ?? null,
-            'new_configure' => $newSig['configure'] ?? null,
-            'old_base_theme' => $oldSig['base theme'] ?? null,
-            'new_base_theme' => $newSig['base theme'] ?? null,
-        ];
+        return YamlDiffDetails::info(
+            $this->changedTopLevelKeys($oldSig, $newSig),
+            $oldDeps,
+            $newDeps,
+            array_values(array_diff($newDeps, $oldDeps)),
+            array_values(array_diff($oldDeps, $newDeps)),
+            $oldSig['configure'] ?? null,
+            $newSig['configure'] ?? null,
+            $oldSig['base theme'] ?? null,
+            $newSig['base theme'] ?? null,
+        );
     }
 
     /**
      * @param array<string, mixed> $oldSig
      * @param array<string, mixed> $newSig
-     * @return array<string, mixed>
      */
-    private function buildStructuredDiffDetails(array $oldSig, array $newSig): array
+    private function buildStructuredDiffDetails(array $oldSig, array $newSig): YamlDiffDetails
     {
-        return [
+        return new YamlDiffDetails([
             'changed_keys' => $this->changedTopLevelKeys($oldSig, $newSig),
             'old_signature' => $oldSig,
             'new_signature' => $newSig,
-        ];
+        ]);
     }
 
     /**
      * @param array<string, mixed> $oldSig
      * @param array<string, mixed> $newSig
-     * @return array<string, mixed>
      */
-    private function buildConfigDiffDetails(array $oldSig, array $newSig): array
+    private function buildConfigDiffDetails(array $oldSig, array $newSig): YamlDiffDetails
     {
         $oldDeps = is_array($oldSig['dependencies'] ?? null) ? $oldSig['dependencies'] : [];
         $newDeps = is_array($newSig['dependencies'] ?? null) ? $newSig['dependencies'] : [];
 
-        return [
-            'added_top_level_keys' => array_values(array_diff(array_keys($newSig), array_keys($oldSig))),
-            'removed_top_level_keys' => array_values(array_diff(array_keys($oldSig), array_keys($newSig))),
-            'changed_top_level_keys' => $this->changedTopLevelKeys($oldSig, $newSig),
-            'old_dependencies' => $oldDeps,
-            'new_dependencies' => $newDeps,
-        ];
+        return YamlDiffDetails::config(
+            array_values(array_diff(array_keys($newSig), array_keys($oldSig))),
+            array_values(array_diff(array_keys($oldSig), array_keys($newSig))),
+            $this->changedTopLevelKeys($oldSig, $newSig),
+            $oldDeps,
+            $newDeps,
+        );
     }
 
     /**
      * @param array<string, mixed> $oldSig
      * @param array<string, mixed> $newSig
-     * @return array<string, mixed>
      */
-    private function buildRecipeDiffDetails(array $oldSig, array $newSig): array
+    private function buildRecipeDiffDetails(array $oldSig, array $newSig): YamlDiffDetails
     {
         $oldInstall = $this->normalizeStringList($oldSig['install'] ?? []);
         $newInstall = $this->normalizeStringList($newSig['install'] ?? []);
         $oldRecipes = $this->normalizeStringList($oldSig['recipes'] ?? []);
         $newRecipes = $this->normalizeStringList($newSig['recipes'] ?? []);
 
-        return [
-            'changed_keys' => $this->changedTopLevelKeys($oldSig, $newSig),
-            'added_install' => array_values(array_diff($newInstall, $oldInstall)),
-            'removed_install' => array_values(array_diff($oldInstall, $newInstall)),
-            'added_recipes' => array_values(array_diff($newRecipes, $oldRecipes)),
-            'removed_recipes' => array_values(array_diff($oldRecipes, $newRecipes)),
-        ];
+        return YamlDiffDetails::recipe(
+            $this->changedTopLevelKeys($oldSig, $newSig),
+            array_values(array_diff($newInstall, $oldInstall)),
+            array_values(array_diff($oldInstall, $newInstall)),
+            array_values(array_diff($newRecipes, $oldRecipes)),
+            array_values(array_diff($oldRecipes, $newRecipes)),
+        );
     }
 
     /**

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace DrupalEvolver\Tests\Unit\Scanner;
 
+use DrupalEvolver\Pattern\QueryGenerator;
 use DrupalEvolver\Scanner\MatchCollector;
 use DrupalEvolver\Scanner\ProjectScanner;
 use DrupalEvolver\Storage\DatabaseApi;
@@ -50,6 +51,46 @@ final class ProjectScannerTest extends TestCase
             $types = array_column($matches, 'change_type');
             $this->assertContains('procedural_to_attribute', $types);
             $this->assertContains('annotation_to_attribute', $types);
+        } finally {
+            $this->removeDir($tempDir);
+        }
+    }
+
+    public function testScanIntoProjectFailsWhenChangeQueriesAreOutdated(): void
+    {
+        $api = new DatabaseApi(':memory:');
+        $parser = $this->createParserOrSkip();
+        $matchCollector = new MatchCollector($parser->binding(), $parser->registry());
+
+        $scanner = new ProjectScanner($parser, $api, $matchCollector);
+
+        $fromId = $api->versions()->create('11.4.0', 11, 4, 0);
+        $toId = $api->versions()->create('12.0.0', 12, 0, 0);
+
+        $changeId = $api->changes()->create([
+            'from_version_id' => $fromId,
+            'to_version_id' => $toId,
+            'language' => 'php',
+            'change_type' => 'function_removed',
+            'old_fqn' => 'non_existent_dummy',
+        ]);
+        (void) $api->db()->execute('UPDATE changes SET query_version = :version WHERE id = :id', [
+            'version' => QueryGenerator::QUERY_VERSION - 1,
+            'id' => $changeId,
+        ]);
+
+        $tempDir = $this->createTempDir('scanner-stale-');
+        mkdir($tempDir . '/modules/example', 0777, true);
+        file_put_contents($tempDir . '/modules/example/example.module', "<?php\nfunction example_help() {}\n");
+
+        try {
+            $projectId = $api->projects()->save('example', $tempDir, 'module', '11.4.0', 'local_path');
+            $runId = $api->scanRuns()->create($projectId, 'example', null, $tempDir, '11.4.0', '12.0.0');
+
+            $this->expectException(\RuntimeException::class);
+            $this->expectExceptionMessage('Stored change queries are outdated');
+
+            (void) $scanner->scanIntoProject($projectId, $runId, $tempDir, '12.0.0', '11.4.0');
         } finally {
             $this->removeDir($tempDir);
         }

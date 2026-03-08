@@ -120,12 +120,20 @@ evolver scan <path> --target=<version> [--from=<version>] [--workers=<n>] [--db=
 **What it does:**
 1. Detects current core version from `composer.lock` (or uses `--from`)
 2. Loads all changes between current and target versions
-3. Reuses or updates the project row keyed by filesystem path
-4. Creates a new `scan_run` so prior scan history is preserved
-5. Walks project files (skips `vendor/` and `node_modules/`)
-6. Parses each file with tree-sitter
-7. Runs each change's `ts_query` against the parsed tree
-8. Stores run-scoped matches in `code_matches` using scan run, change, path, and byte range identity
+3. Validates that loaded changes use the current `query_version`
+4. Reuses or updates the project row keyed by filesystem path
+5. Creates a new `scan_run` so prior scan history is preserved
+6. Walks project files (skips `vendor/` and `node_modules/`)
+7. Parses each file with tree-sitter
+8. Runs each change's `ts_query` against the parsed tree
+9. Stores run-scoped matches in `code_matches` using scan run, change, path, and byte range identity
+
+If stale queries are detected, scan fails fast with a message telling you to regenerate changes via `diff`.
+
+```bash
+make ev -- diff --from=11.4.0 --to=12.0.0
+make evr -- scan /mnt/project --from=11.4.0 --target=12.0.0 EXTRA_HOST_PATH=../drupal
+```
 
 **Example:**
 ```bash

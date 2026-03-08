@@ -40,31 +40,33 @@ final class DrupalLibrariesExtractor implements ExtractorInterface
             }
 
             $definitionArray = is_array($definition) ? $definition : ['value' => $definition];
+            
+            // Use LibraryDefinition value object
+            $libraryDef = LibraryDefinition::fromArray($libraryName, $definitionArray, $owner);
+            
             $normalized = $this->normalizeValue($definitionArray);
             if (!is_array($normalized)) {
                 $normalized = ['value' => $normalized];
             }
 
-            $assetEntries = $this->extractAssetEntries($definitionArray, $filePath);
-            $javascriptAssets = [];
-            $cssAssets = [];
-            $assetPaths = [];
-            $externalAssets = [];
+            // Extract assets from value object
+            $javascriptAssets = array_map(
+                static fn($e): string => $e->getFullPath() ?? $e->sourcePath,
+                $libraryDef->getJavaScriptAssets()
+            );
+            $cssAssets = array_map(
+                static fn($e): string => $e->getFullPath() ?? $e->sourcePath,
+                $libraryDef->getCssAssets()
+            );
+            $assetPaths = array_map(
+                static fn($e): string => $e->getFullPath() ?? $e->sourcePath,
+                $libraryDef->getInternalAssets()
+            );
+            $externalAssets = array_map(
+                static fn($e): string => $e->sourcePath,
+                $libraryDef->getExternalAssets()
+            );
 
-            foreach ($assetEntries as $entry) {
-                if (($entry['internal'] ?? false) === true) {
-                    $assetPaths[] = (string) $entry['resolved_path'];
-                    if (($entry['asset_type'] ?? null) === 'javascript') {
-                        $javascriptAssets[] = (string) $entry['resolved_path'];
-                    } elseif (($entry['asset_type'] ?? null) === 'css') {
-                        $cssAssets[] = (string) $entry['resolved_path'];
-                    }
-                } else {
-                    $externalAssets[] = (string) $entry['source_path'];
-                }
-            }
-
-            $dependencies = $this->extractStringList($definitionArray['dependencies'] ?? []);
             $deprecationMessage = $this->resolveDeprecationMessage($definitionArray);
             $range = $ranges[$libraryName] ?? null;
             $signatureJson = $this->encodeJson($normalized);
@@ -75,11 +77,13 @@ final class DrupalLibrariesExtractor implements ExtractorInterface
                 'javascript_assets' => $this->uniqueStrings($javascriptAssets),
                 'css_assets' => $this->uniqueStrings($cssAssets),
                 'external_assets' => $this->uniqueStrings($externalAssets),
-                'asset_entries' => $assetEntries,
-                'dependency_libraries' => $dependencies,
-                'dependency_owners' => $this->extractLibraryOwners($dependencies),
-                'remote' => $this->stringOrNull($definitionArray['remote'] ?? null),
-                'version' => $this->stringOrNull($definitionArray['version'] ?? null),
+                'asset_entries' => array_map(fn($e) => $e->toArray(), $libraryDef->assetEntries),
+                'dependency_libraries' => $libraryDef->dependencies,
+                'dependency_owners' => $libraryDef->getDependencyOwners(),
+                'remote' => $libraryDef->remote,
+                'version' => $libraryDef->version,
+                'license' => $libraryDef->license,
+                'is_deprecated' => $libraryDef->isDeprecated(),
             ];
 
             $symbol = [

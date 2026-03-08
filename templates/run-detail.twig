@@ -13,6 +13,17 @@
         </div>
     </section>
 
+    {% if stale_query_match_count > 0 %}
+        <section class="panel">
+            <p>
+                <strong>Stale Query Warning:</strong>
+                {{ stale_query_match_count }} finding{{ stale_query_match_count == 1 ? '' : 's' }} in this run
+                were produced by older query definitions. Re-run diff + scan to refresh results
+                (current query version: {{ query_version }}).
+            </p>
+        </section>
+    {% endif %}
+
     <section class="grid two-up">
         <article class="panel">
             <div class="panel-head">

@@ -23,8 +23,9 @@ class QueryGeneratorTest extends TestCase
             'symbol_type' => 'function',
         ]);
 
-        $this->assertStringContainsString('function_call_expression', $query);
-        $this->assertStringContainsString('drupal_render', $query);
+        $this->assertNotNull($query);
+        $this->assertStringContainsString('function_call_expression', $query->pattern);
+        $this->assertStringContainsString('drupal_render', $query->pattern);
     }
 
     public function testMethodRemoved(): void
@@ -34,8 +35,9 @@ class QueryGeneratorTest extends TestCase
             'symbol_type' => 'method',
         ]);
 
-        $this->assertStringContainsString('member_call_expression', $query);
-        $this->assertStringContainsString('oldMethod', $query);
+        $this->assertNotNull($query);
+        $this->assertStringContainsString('member_call_expression', $query->pattern);
+        $this->assertStringContainsString('oldMethod', $query->pattern);
     }
 
     public function testClassRemoved(): void
@@ -46,9 +48,10 @@ class QueryGeneratorTest extends TestCase
             'symbol_type' => 'class',
         ]);
 
-        $this->assertStringContainsString('qualified_name', $query);
-        $this->assertStringContainsString('Drupal\\\\\\\\Core\\\\\\\\OldClass', $query);
-        $this->assertStringNotContainsString('cls_short', $query);
+        $this->assertNotNull($query);
+        $this->assertStringContainsString('qualified_name', $query->pattern);
+        $this->assertStringContainsString('Drupal\\\\\\\\Core\\\\\\\\OldClass', $query->pattern);
+        $this->assertStringNotContainsString('cls_short', $query->pattern);
     }
 
     public function testServiceRemoved(): void
@@ -58,8 +61,9 @@ class QueryGeneratorTest extends TestCase
             'symbol_type' => 'service',
         ]);
 
-        $this->assertStringContainsString('string_content', $query);
-        $this->assertStringContainsString('old.service', $query);
+        $this->assertNotNull($query);
+        $this->assertStringContainsString('string_content', $query->pattern);
+        $this->assertStringContainsString('old.service', $query->pattern);
     }
 
     public function testSignatureChanged(): void
@@ -69,8 +73,9 @@ class QueryGeneratorTest extends TestCase
             'symbol_type' => 'function',
         ]);
 
-        $this->assertStringContainsString('function_call_expression', $query);
-        $this->assertStringContainsString('arguments', $query);
+        $this->assertNotNull($query);
+        $this->assertStringContainsString('function_call_expression', $query->pattern);
+        $this->assertStringContainsString('arguments', $query->pattern);
     }
 
     public function testFunctionRenamed(): void
@@ -80,8 +85,9 @@ class QueryGeneratorTest extends TestCase
             'symbol_type' => 'function',
         ]);
 
-        $this->assertStringContainsString('function_call_expression', $query);
-        $this->assertStringContainsString('drupal_render', $query);
+        $this->assertNotNull($query);
+        $this->assertStringContainsString('function_call_expression', $query->pattern);
+        $this->assertStringContainsString('drupal_render', $query->pattern);
     }
 
     public function testServiceClassChanged(): void
@@ -91,8 +97,9 @@ class QueryGeneratorTest extends TestCase
             'symbol_type' => 'service',
         ]);
 
-        $this->assertStringContainsString('string_content', $query);
-        $this->assertStringContainsString('my.service', $query);
+        $this->assertNotNull($query);
+        $this->assertStringContainsString('string_content', $query->pattern);
+        $this->assertStringContainsString('my.service', $query->pattern);
     }
 
     public function testConfigKeyRemoved(): void
@@ -102,8 +109,9 @@ class QueryGeneratorTest extends TestCase
             'symbol_type' => 'config_schema',
         ]);
 
-        $this->assertStringContainsString('string_content', $query);
-        $this->assertStringContainsString('my_module.settings', $query);
+        $this->assertNotNull($query);
+        $this->assertStringContainsString('string_content', $query->pattern);
+        $this->assertStringContainsString('my_module.settings', $query->pattern);
     }
 
     public function testModuleDependenciesChangedUsesSymbolQuery(): void
@@ -114,8 +122,8 @@ class QueryGeneratorTest extends TestCase
         ]);
 
         $this->assertNotNull($query);
-        $this->assertStringContainsString('string_content', $query);
-        $this->assertStringContainsString('example', $query);
+        $this->assertStringContainsString('string_content', $query->pattern);
+        $this->assertStringContainsString('example', $query->pattern);
     }
 
     public function testConfigObjectChangedUsesSymbolQuery(): void
@@ -126,8 +134,8 @@ class QueryGeneratorTest extends TestCase
         ]);
 
         $this->assertNotNull($query);
-        $this->assertStringContainsString('string_content', $query);
-        $this->assertStringContainsString('system.site', $query);
+        $this->assertStringContainsString('string_content', $query->pattern);
+        $this->assertStringContainsString('system.site', $query->pattern);
     }
 
     public function testDeprecatedAddedUsesSymbolTypeQuery(): void
@@ -137,8 +145,9 @@ class QueryGeneratorTest extends TestCase
             'symbol_type' => 'method',
         ]);
 
-        $this->assertStringContainsString('member_call_expression', $query);
-        $this->assertStringContainsString('old_method', $query);
+        $this->assertNotNull($query);
+        $this->assertStringContainsString('member_call_expression', $query->pattern);
+        $this->assertStringContainsString('old_method', $query->pattern);
     }
 
     public function testClassRenamedMatchesFqnAndShortName(): void
@@ -149,10 +158,11 @@ class QueryGeneratorTest extends TestCase
             'symbol_type' => 'class',
         ]);
 
-        $this->assertStringContainsString('qualified_name', $query);
-        $this->assertStringContainsString('#match?', $query);
-        $this->assertStringContainsString('Drupal\\\\\\\\Core\\\\\\\\Old\\\\\\\\SomeClass', $query);
-        $this->assertStringNotContainsString('cls_short', $query);
+        $this->assertNotNull($query);
+        $this->assertStringContainsString('qualified_name', $query->pattern);
+        $this->assertStringContainsString('#match?', $query->pattern);
+        $this->assertStringContainsString('Drupal\\\\\\\\Core\\\\\\\\Old\\\\\\\\SomeClass', $query->pattern);
+        $this->assertStringNotContainsString('cls_short', $query->pattern);
     }
 
     public function testGlobalReplaced(): void
@@ -163,8 +173,8 @@ class QueryGeneratorTest extends TestCase
         ]);
 
         $this->assertNotNull($query);
-        $this->assertStringContainsString('global_declaration', $query);
-        $this->assertStringContainsString('$user', $query);
+        $this->assertStringContainsString('global_declaration', $query->pattern);
+        $this->assertStringContainsString('$user', $query->pattern);
     }
 
     public function testConstantReplaced(): void
@@ -175,7 +185,7 @@ class QueryGeneratorTest extends TestCase
         ]);
 
         $this->assertNotNull($query);
-        $this->assertStringContainsString('LANGUAGE_NONE', $query);
+        $this->assertStringContainsString('LANGUAGE_NONE', $query->pattern);
     }
 
     public function testVariableAccessReplaced(): void
@@ -186,8 +196,8 @@ class QueryGeneratorTest extends TestCase
         ]);
 
         $this->assertNotNull($query);
-        $this->assertStringContainsString('member_access_expression', $query);
-        $this->assertStringContainsString('nid', $query);
+        $this->assertStringContainsString('member_access_expression', $query->pattern);
+        $this->assertStringContainsString('nid', $query->pattern);
     }
 
     public function testFunctionCallRewrite(): void
@@ -198,8 +208,8 @@ class QueryGeneratorTest extends TestCase
         ]);
 
         $this->assertNotNull($query);
-        $this->assertStringContainsString('function_call_expression', $query);
-        $this->assertStringContainsString('check_plain', $query);
+        $this->assertStringContainsString('function_call_expression', $query->pattern);
+        $this->assertStringContainsString('check_plain', $query->pattern);
     }
 
     public function testUnknownChangeType(): void

@@ -21,7 +21,7 @@ class MatchCollector
     /** @var array<string, bool> */
     private array $invalidQueryCache = [];
 
-    /** @var array<string, array{old_count:int, new_count:int}|null> */
+    /** @var array<string, SignatureHint|null> */
     private array $signatureHintCache = [];
 
     public function __construct(
@@ -30,7 +30,9 @@ class MatchCollector
     ) {}
 
     /**
-     * @return Generator<int, array<string, mixed>>
+     * Collect matches for all changes against the given source.
+     *
+     * @return Generator<int, MatchResult>
      */
     public function collectMatches(Node $root, string $source, string $language, array $changes): Generator
     {
@@ -40,23 +42,13 @@ class MatchCollector
         }
 
         foreach ($changes as $change) {
-            $tsQuery = (string) ($change['ts_query'] ?? '');
-            if ($tsQuery === '') {
+            $context = new ScanContext($root, $source, $language, $change);
+            
+            if (!$this->shouldProcessChange($context)) {
                 continue;
             }
 
-            // Fast text filter: if the old symbol name is not in source, skip query
-            $oldFqn = (string) ($change['old_fqn'] ?? '');
-            if ($oldFqn !== '') {
-                // Get the short name from FQN
-                $parts = preg_split('/[\\\\:]/', $oldFqn);
-                $shortName = end($parts);
-                if ($shortName !== '' && !str_contains($source, $shortName)) {
-                    continue;
-                }
-            }
-
-            $query = $this->resolveQuery($language, $tsQuery, $lang);
+            $query = $this->resolveQuery($language, $context->getQuery(), $lang);
             if ($query === null) {
                 continue;
             }
@@ -65,30 +57,16 @@ class MatchCollector
 
             try {
                 foreach ($query->matches($root, $source) as $captures) {
-                    if (!$this->passesPostProcessing($change, $captures, $signatureHint)) {
+                    if (!$this->passesPostProcessing($context, $captures, $signatureHint)) {
                         continue;
                     }
 
-                    $matchNode = $this->selectMatchNode($change, $captures);
+                    $matchNode = $this->selectMatchNode($context, $captures);
                     if (!$matchNode) {
                         continue;
                     }
 
-                    yield [
-                        'change_id' => $change['id'] > 0 ? $change['id'] : null,
-                        'line_start' => $matchNode->startPoint()['row'] + 1,
-                        'line_end' => $matchNode->endPoint()['row'] + 1,
-                        'byte_start' => $matchNode->startByte(),
-                        'byte_end' => $matchNode->endByte(),
-                        'matched_source' => $matchNode->text(),
-                        'fix_method' => !empty($change['fix_template']) ? 'template' : 'manual',
-                        'suggested_fix' => null,
-                        'status' => 'pending',
-                        'change_type' => $change['metadata']['change_type'] ?? null,
-                        'severity' => $change['metadata']['severity'] ?? null,
-                        'old_fqn' => $change['metadata']['old_fqn'] ?? null,
-                        'migration_hint' => $change['metadata']['migration_hint'] ?? null,
-                    ];
+                    yield MatchResult::fromContext($context, $matchNode);
                 }
             } catch (\Throwable) {
                 continue;
@@ -97,29 +75,47 @@ class MatchCollector
     }
 
     /**
-     * @param array<string, mixed> $change
-     * @param array<string, Node> $captures
+     * Check if a change should be processed for the given source.
      */
-    private function selectMatchNode(array $change, array $captures): ?Node
+    private function shouldProcessChange(ScanContext $context): bool
     {
-        $changeType = (string) ($change['change_type'] ?? '');
-        if ($changeType === 'signature_changed' && isset($captures['args']) && $captures['args'] instanceof Node) {
-            return $captures['args'];
+        // Must have a query
+        if ($context->getQuery() === null) {
+            return false;
         }
 
+        // Fast text filter: if the old symbol name is not in source, skip
+        return $context->containsSymbol();
+    }
+
+    /**
+     * Select the node to use for the match based on change type.
+     *
+     * @param array<string, Node> $captures
+     */
+    private function selectMatchNode(ScanContext $context, array $captures): ?Node
+    {
+        // For signature changes, prefer the arguments node
+        if ($context->getChangeType() === 'signature_changed' && isset($captures['args'])) {
+            $argsNode = $captures['args'];
+            if ($argsNode instanceof Node) {
+                return $argsNode;
+            }
+        }
+
+        // Otherwise use the first capture
         $first = reset($captures);
         return $first instanceof Node ? $first : null;
     }
 
     /**
-     * @param array<string, mixed> $change
      * @param array<string, Node> $captures
-     * @param array{old_count:int, new_count:int}|null $signatureHint
+     * @param SignatureHint|null $signatureHint
      */
-    private function passesPostProcessing(array $change, array $captures, ?array $signatureHint): bool
+    private function passesPostProcessing(ScanContext $context, array $captures, ?SignatureHint $signatureHint): bool
     {
-        $changeType = (string) ($change['change_type'] ?? '');
-        if ($changeType !== 'signature_changed') {
+        // Only signature changes need post-processing
+        if ($context->getChangeType() !== 'signature_changed') {
             return true;
         }
 
@@ -128,9 +124,9 @@ class MatchCollector
 
     /**
      * @param array<string, Node> $captures
-     * @param array{old_count:int, new_count:int}|null $signatureHint
+     * @param SignatureHint|null $signatureHint
      */
-    private function passesSignatureArgCountHeuristic(array $captures, ?array $signatureHint): bool
+    private function passesSignatureArgCountHeuristic(array $captures, ?SignatureHint $signatureHint): bool
     {
         $argsNode = $captures['args'] ?? null;
         if (!$argsNode instanceof Node) {
@@ -141,8 +137,8 @@ class MatchCollector
             return true;
         }
 
-        $oldCount = $signatureHint['old_count'];
-        $newCount = $signatureHint['new_count'];
+        $oldCount = $signatureHint->oldCount;
+        $newCount = $signatureHint->newCount;
         $callArgCount = $this->argumentCount($argsNode);
 
         if ($newCount > $oldCount) {
@@ -197,10 +193,9 @@ class MatchCollector
     }
 
     /**
-     * @param array<string, mixed> $change
-     * @return array{old_count:int, new_count:int}|null
+     * Resolve the signature hint for a signature_changed context.
      */
-    private function resolveSignatureHint(array $change): ?array
+    private function resolveSignatureHint(array $change): ?SignatureHint
     {
         if (($change['change_type'] ?? null) !== 'signature_changed') {
             return null;
@@ -231,10 +226,10 @@ class MatchCollector
             return null;
         }
 
-        $this->signatureHintCache[$cacheKey] = [
-            'old_count' => count($oldParams),
-            'new_count' => count($newParams),
-        ];
+        $this->signatureHintCache[$cacheKey] = SignatureHint::create(
+            count($oldParams),
+            count($newParams)
+        );
 
         return $this->signatureHintCache[$cacheKey];
     }

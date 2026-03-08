@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace DrupalEvolver\Tests\Unit\Web;
 
+use DrupalEvolver\Pattern\QueryGenerator;
+
 final class ResultsPageRenderTest extends UiTestCase
 {
     public function testRunDetailRendersAllFragments(): void
@@ -70,6 +72,18 @@ final class ResultsPageRenderTest extends UiTestCase
         $this->assertStringContainsString('id="filter-sidebar"', $html, 'Fragments should render even with empty matches');
     }
 
+    public function testRunDetailRendersStaleQueryWarning(): void
+    {
+        $html = $this->renderTemplate('run-detail.twig', $this->makeRunDetailContext([], [
+            'stale_query_match_count' => 3,
+            'query_version' => QueryGenerator::QUERY_VERSION,
+        ]));
+
+        $this->assertStringContainsString('Stale Query Warning', $html);
+        $this->assertStringContainsString('3 findings in this run', $html);
+        $this->assertStringContainsString('current query version: ' . QueryGenerator::QUERY_VERSION, $html);
+    }
+
     public function testRunDetailHasBalancedDivs(): void
     {
         $this->assertBalancedTag($this->renderRunDetail(), 'div');
@@ -118,6 +132,8 @@ final class ResultsPageRenderTest extends UiTestCase
                     'path' => 'modules/custom/custom_core_api',
                     'dependencies' => [],
                     'dependents' => ['custom_ecommerce'],
+                    'transitive_dependencies' => [],
+                    'dependency_match_count' => 0,
                     'match_count' => 10,
                     'by_severity' => ['breaking' => 10],
                 ],
@@ -128,19 +144,78 @@ final class ResultsPageRenderTest extends UiTestCase
                     'path' => 'themes/custom/custom_theme',
                     'dependencies' => ['custom_ecommerce'],
                     'dependents' => [],
+                    'transitive_dependencies' => ['custom_ecommerce', 'custom_core_api'],
+                    'dependency_match_count' => 14,
                     'match_count' => 0,
                     'by_severity' => [],
                 ],
             ],
+            'graph' => [
+                [
+                    'machine_name' => 'custom_theme',
+                    'label' => 'Custom Theme',
+                    'type' => 'theme',
+                    'path' => 'themes/custom/custom_theme',
+                    'dependencies' => ['custom_ecommerce'],
+                    'dependents' => [],
+                    'transitive_dependencies' => ['custom_ecommerce', 'custom_core_api'],
+                    'impact_details' => [
+                        ['extension' => 'custom_core_api', 'match_count' => 10, 'score' => 100],
+                        ['extension' => 'custom_ecommerce', 'match_count' => 4, 'score' => 12],
+                    ],
+                    'dependency_match_count' => 14,
+                    'match_count' => 0,
+                    'hotspot_score' => 112,
+                    'by_severity' => [],
+                ],
+                [
+                    'machine_name' => 'custom_core_api',
+                    'label' => 'Core API',
+                    'type' => 'module',
+                    'path' => 'modules/custom/custom_core_api',
+                    'dependencies' => [],
+                    'dependents' => ['custom_ecommerce'],
+                    'transitive_dependencies' => [],
+                    'impact_details' => [],
+                    'dependency_match_count' => 0,
+                    'match_count' => 10,
+                    'hotspot_score' => 100,
+                    'by_severity' => ['breaking' => 10],
+                ],
+            ],
+            'stale_query_match_count' => 0,
+            'query_version' => QueryGenerator::QUERY_VERSION,
         ]);
 
         $this->assertStringContainsString('Upgrade Plan', $html);
+        $this->assertStringContainsString('Upgrade Hotspots', $html);
         $this->assertStringContainsString('Recommended Upgrade Path', $html);
         $this->assertStringContainsString('custom_core_api', $html);
         $this->assertStringContainsString('custom_ecommerce', $html);
         $this->assertStringContainsString('10 break', $html);
         $this->assertStringContainsString('Clean', $html);
+        $this->assertStringContainsString('14', $html);
+        $this->assertStringContainsString('upstream extensions', $html);
+        $this->assertStringContainsString('Review Direct Issues', $html);
+        $this->assertStringContainsString('No direct findings to review', $html);
         $this->assertStringContainsString('/runs/1/extensions/modules%2Fcustom%2Fcustom_core_api', $html);
         $this->assertStringNotContainsString('/runs/1/extensions/themes%2Fcustom%2Fcustom_theme', $html);
+    }
+
+    public function testRunPlanRendersStaleQueryWarning(): void
+    {
+        $html = $this->renderTemplate('run-plan.twig', [
+            'project' => ['id' => 1, 'name' => 'test-project'],
+            'run' => $this->makeRun(),
+            'summary' => $this->makeSummary(),
+            'plan' => [],
+            'graph' => [],
+            'stale_query_match_count' => 1,
+            'query_version' => QueryGenerator::QUERY_VERSION,
+        ]);
+
+        $this->assertStringContainsString('Stale Query Warning', $html);
+        $this->assertStringContainsString('1 finding in this run', $html);
+        $this->assertStringContainsString('current query version: ' . QueryGenerator::QUERY_VERSION, $html);
     }
 }

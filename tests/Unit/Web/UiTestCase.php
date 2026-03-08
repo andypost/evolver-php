@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace DrupalEvolver\Tests\Unit\Web;
 
+use DrupalEvolver\Pattern\QueryGenerator;
 use PHPUnit\Framework\TestCase;
 use Twig\Environment;
 use Twig\Loader\FilesystemLoader;
@@ -66,6 +67,8 @@ abstract class UiTestCase extends TestCase
                 ],
             ],
             'logs' => [],
+            'stale_query_match_count' => 0,
+            'query_version' => QueryGenerator::QUERY_VERSION,
         ], $overrides);
     }
 

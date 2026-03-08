@@ -354,5 +354,67 @@ code {
     border-top: 0;
 }
 
+.pill-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+}
+
+.hotspot-card {
+    display: grid;
+    gap: 0.9rem;
+}
+
+.hotspot-card__head,
+.hotspot-card__title,
+.hotspot-card__actions {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+.hotspot-card__title {
+    align-items: start;
+    flex-direction: column;
+}
+
+.hotspot-card__score {
+    font-size: 1.8rem;
+    line-height: 1;
+    font-family: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Palatino, serif;
+}
+
+.hotspot-card__stats {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.75rem;
+}
+
+.hotspot-card__stats > div {
+    padding: 0.75rem;
+    border-radius: 14px;
+    border: 1px solid var(--line);
+    background: rgba(255, 255, 255, 0.65);
+}
+
+.hotspot-card__stats strong {
+    display: block;
+    margin-top: 0.2rem;
+    font-size: 1.15rem;
+}
+
+@media (max-width: 640px) {
+    .hotspot-card__head,
+    .hotspot-card__actions {
+        align-items: start;
+        flex-direction: column;
+    }
+
+    .hotspot-card__stats {
+        grid-template-columns: 1fr;
+    }
+}
+
 .job-item-basic { display: flex; align-items: center; justify-content: space-between; width: 100%; gap: 1rem; }
 .meta-link { font-size: 0.85rem; color: var(--accent); }

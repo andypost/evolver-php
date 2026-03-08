@@ -121,4 +121,83 @@ class DatabaseApiPlanTest extends TestCase
         $this->assertContains('mod_a', $names);
         $this->assertContains('mod_b', $names);
     }
+
+    public function testGetProjectExtensionGraphCalculatesTransitiveHotspots(): void
+    {
+        $projectId = $this->api->projects()->save('graph_proj', '/app/web', 'drupal-site', '10.0.0');
+        $runId = $this->api->scanRuns()->create($projectId, 'main', null, '/app/web', '10.0.0', '11.0.0');
+
+        $this->api->projectExtensions()->save(
+            $projectId,
+            'custom_core_api',
+            'module',
+            'Core API',
+            [],
+            'modules/custom/custom_core_api/custom_core_api.info.yml'
+        );
+        $this->api->projectExtensions()->save(
+            $projectId,
+            'custom_ecommerce',
+            'module',
+            'Ecommerce',
+            ['custom_core_api'],
+            'modules/custom/custom_ecommerce/custom_ecommerce.info.yml'
+        );
+        $this->api->projectExtensions()->save(
+            $projectId,
+            'custom_theme',
+            'theme',
+            'My Theme',
+            ['custom_ecommerce', 'commerce'],
+            'themes/custom/custom_theme/custom_theme.info.yml'
+        );
+
+        for ($i = 0; $i < 10; $i++) {
+            $_ = $this->api->db()->execute(
+                'INSERT INTO code_matches (project_id, scan_run_id, scope_key, file_path, byte_start, byte_end, severity)
+                 VALUES (?, ?, ?, ?, ?, ?, ?)',
+                [$projectId, $runId, "run:{$runId}", "modules/custom/custom_core_api/src/Foo{$i}.php", $i, $i + 10, 'breaking']
+            );
+        }
+
+        for ($i = 0; $i < 4; $i++) {
+            $_ = $this->api->db()->execute(
+                'INSERT INTO code_matches (project_id, scan_run_id, scope_key, file_path, byte_start, byte_end, severity)
+                 VALUES (?, ?, ?, ?, ?, ?, ?)',
+                [$projectId, $runId, "run:{$runId}", "modules/custom/custom_ecommerce/src/Bar{$i}.php", $i, $i + 10, 'warning']
+            );
+        }
+
+        $graph = $this->api->getProjectExtensionGraph($runId, $projectId);
+        $indexed = [];
+        foreach ($graph as $node) {
+            $indexed[$node['machine_name']] = $node;
+        }
+
+        $this->assertCount(3, $indexed);
+
+        $this->assertSame(100, $indexed['custom_core_api']['score']);
+        $this->assertSame(0, $indexed['custom_core_api']['dependency_match_count']);
+        $this->assertSame(0, $indexed['custom_core_api']['dependency_score']);
+        $this->assertSame(100, $indexed['custom_core_api']['hotspot_score']);
+
+        $this->assertSame(['custom_core_api'], $indexed['custom_ecommerce']['dependencies']);
+        $this->assertSame(['custom_theme'], $indexed['custom_ecommerce']['dependents']);
+        $this->assertSame(['custom_core_api'], $indexed['custom_ecommerce']['transitive_dependencies']);
+        $this->assertSame(4, $indexed['custom_ecommerce']['match_count']);
+        $this->assertSame(12, $indexed['custom_ecommerce']['score']);
+        $this->assertSame(10, $indexed['custom_ecommerce']['dependency_match_count']);
+        $this->assertSame(100, $indexed['custom_ecommerce']['dependency_score']);
+        $this->assertSame(112, $indexed['custom_ecommerce']['hotspot_score']);
+
+        $this->assertSame(['custom_ecommerce'], $indexed['custom_theme']['dependencies']);
+        $this->assertSame([], $indexed['custom_theme']['dependents']);
+        $this->assertSame(['custom_ecommerce', 'custom_core_api'], $indexed['custom_theme']['transitive_dependencies']);
+        $this->assertSame(14, $indexed['custom_theme']['dependency_match_count']);
+        $this->assertSame(112, $indexed['custom_theme']['dependency_score']);
+        $this->assertSame(112, $indexed['custom_theme']['hotspot_score']);
+        $this->assertCount(2, $indexed['custom_theme']['impact_details']);
+        $this->assertSame('custom_core_api', $indexed['custom_theme']['impact_details'][0]['extension']);
+        $this->assertSame('custom_ecommerce', $indexed['custom_theme']['impact_details'][1]['extension']);
+    }
 }

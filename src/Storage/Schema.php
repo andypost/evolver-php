@@ -20,6 +20,7 @@ final class Schema
         $this->ensureColumnExists('projects', 'default_branch', 'TEXT');
         $this->ensureColumnExists('projects', 'package_name', 'TEXT');
         $this->ensureColumnExists('projects', 'root_name', 'TEXT');
+        $this->ensureColumnExists('changes', 'query_version', 'INTEGER');
 
         $this->migrateCodeMatchesTable();
         $this->ensureCodeMatchIndexes();
@@ -35,7 +36,7 @@ final class Schema
 
         $this->db->pdo()->exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_project_path ON projects(path)');
         $_ = $this->db->execute(
-            "INSERT OR REPLACE INTO schema_meta (key, value) VALUES ('schema_version', '6')"
+            "INSERT OR REPLACE INTO schema_meta (key, value) VALUES ('schema_version', '7')"
         );
     }
 
@@ -136,6 +137,7 @@ final class Schema
                 new_fqn         TEXT,
                 diff_json       TEXT,
                 ts_query        TEXT,
+                query_version   INTEGER,
                 fix_template    TEXT,
                 fix_method      TEXT,
                 migration_hint  TEXT,

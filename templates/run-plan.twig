@@ -1,6 +1,7 @@
 {% extends "layout.twig" %}
 
 {% block content %}
+    {% set hotspots = graph ?? plan %}
     <section class="hero hero-compact">
         <div>
             <p class="eyebrow">Upgrade Plan</p>
@@ -14,6 +15,17 @@
         </div>
     </section>
 
+    {% if stale_query_match_count > 0 %}
+        <section class="panel">
+            <p>
+                <strong>Stale Query Warning:</strong>
+                {{ stale_query_match_count }} finding{{ stale_query_match_count == 1 ? '' : 's' }} in this run
+                were produced by older query definitions. Re-run diff + scan to refresh plan quality
+                (current query version: {{ query_version }}).
+            </p>
+        </section>
+    {% endif %}
+
     <div class="stats-grid" style="margin-bottom: 2rem;">
         <div class="stat-card">
             <div class="stat-label">Total Custom Extensions</div>
@@ -24,6 +36,70 @@
             <div class="stat-value">{{ summary.by_severity['breaking'] ?? 0 }}</div>
         </div>
     </div>
+
+    <section class="panel">
+        <div class="panel-head">
+            <h2>Upgrade Hotspots</h2>
+            <p class="muted small">Ranked by direct issues plus upstream dependency risk. Use this to decide where review effort should start.</p>
+        </div>
+
+        {% if hotspots %}
+            <div class="grid three-up">
+                {% for item in hotspots|slice(0, 3) %}
+                    <article class="project-card hotspot-card">
+                        <div class="hotspot-card__head">
+                            <span class="pill type-generic">#{{ loop.index }}</span>
+                            <strong class="hotspot-card__score">{{ item.hotspot_score }}</strong>
+                        </div>
+                        <div class="hotspot-card__title">
+                            <strong>{{ item.label }}</strong>
+                            <span class="muted small"><code>{{ item.machine_name }}</code> ({{ item.type }})</span>
+                        </div>
+                        <div class="hotspot-card__stats">
+                            <div>
+                                <span class="meta-label">Direct</span>
+                                <strong>{{ item.match_count }}</strong>
+                            </div>
+                            <div>
+                                <span class="meta-label">Upstream</span>
+                                <strong>{{ item.dependency_match_count }}</strong>
+                            </div>
+                            <div>
+                                <span class="meta-label">Downstream</span>
+                                <strong>{{ item.dependents|length }}</strong>
+                            </div>
+                        </div>
+                        {% if item.impact_details %}
+                            <p class="muted small">
+                                Most exposed through <code>{{ item.impact_details[0].extension }}</code>
+                                {% if item.impact_details|length > 1 %}
+                                    and {{ item.impact_details|length - 1 }} more.
+                                {% endif %}
+                            </p>
+                        {% else %}
+                            <p class="muted small">No upstream dependency risk detected for this extension.</p>
+                        {% endif %}
+                        {% if item.dependencies %}
+                            <div class="pill-list">
+                                {% for dep in item.dependencies %}
+                                    <span class="pill type-generic">{{ dep }}</span>
+                                {% endfor %}
+                            </div>
+                        {% endif %}
+                        <div class="hotspot-card__actions">
+                            {% if item.match_count > 0 %}
+                                <a href="/runs/{{ run.id }}/extensions/{{ item.path|url_encode }}" class="button small">Review Direct Issues</a>
+                            {% else %}
+                                <span class="muted small">No direct findings to review</span>
+                            {% endif %}
+                        </div>
+                    </article>
+                {% endfor %}
+            </div>
+        {% else %}
+            <p class="empty">No custom extensions found in this project.</p>
+        {% endif %}
+    </section>
 
     <section class="panel">
         <div class="panel-head">
@@ -40,6 +116,7 @@
                             <th>Extension</th>
                             <th>Dependencies</th>
                             <th>Dependents</th>
+                            <th>Upstream Impact</th>
                             <th style="text-align: right">Issues</th>
                             <th style="text-align: right">Action</th>
                         </tr>
@@ -66,6 +143,14 @@
                                 <td>
                                     {% if item.dependents %}
                                         <span class="muted small">{{ item.dependents|length }} downstream</span>
+                                    {% else %}
+                                        <span class="muted small">0</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    {% if item.dependency_match_count > 0 %}
+                                        <strong>{{ item.dependency_match_count }}</strong>
+                                        <span class="muted small">issues across {{ item.transitive_dependencies|length }} upstream {{ item.transitive_dependencies|length == 1 ? 'extension' : 'extensions' }}</span>
                                     {% else %}
                                         <span class="muted small">0</span>
                                     {% endif %}

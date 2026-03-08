@@ -147,9 +147,9 @@ PHP;
                 $tree = $parser->parse(self::PHP_SOURCE, 'php');
                 $matches = iterator_to_array($collector->collectMatches($tree->rootNode(), self::PHP_SOURCE, 'php', $changes));
                 foreach ($matches as $match) {
-                    $match['matched_source'] ?? null;
-                    $match['byte_start'] ?? null;
-                    $match['byte_end'] ?? null;
+                    $match->matchedSource ?? null;
+                    $match->byteStart ?? null;
+                    $match->byteEnd ?? null;
                 }
                 unset($matches, $tree);
             },

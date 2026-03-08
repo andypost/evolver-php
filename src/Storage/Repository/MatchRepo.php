@@ -175,6 +175,7 @@ final class MatchRepo
                     COALESCE(m.migration_hint, c.migration_hint) as migration_hint,
                     COALESCE(m.old_fqn, c.old_fqn) as old_fqn,
                     c.diff_json, c.new_fqn, c.fix_method,
+                    sr.source_path as run_source_path,
                     p.path as project_path,
                     p.source_type as project_source_type
              FROM code_matches m

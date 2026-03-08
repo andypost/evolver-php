@@ -8,7 +8,9 @@ use DrupalEvolver\Symbol\SymbolType;
 
 class QueryGenerator
 {
-    public function generate(string $changeType, array $symbol): ?string
+    public const QUERY_VERSION = 2;
+
+    public function generate(string $changeType, array $symbol): ?QueryPattern
     {
         $type = SymbolType::fromSymbol($symbol);
         $name = $this->resolveName($symbol);
@@ -25,23 +27,23 @@ class QueryGenerator
         }
 
         if (in_array($changeType, ['service_removed', 'service_renamed', 'service_class_changed', 'service_changed'], true)) {
-            return $this->serviceReference($name);
+            return QueryPattern::serviceReference($name);
         }
 
         if (in_array($changeType, ['route_removed', 'route_renamed', 'route_changed'], true)) {
-            return $this->stringReference($name);
+            return QueryPattern::stringReference($name);
         }
 
         if (in_array($changeType, ['permission_removed', 'permission_renamed'], true)) {
-            return $this->stringReference($name);
+            return QueryPattern::stringReference($name);
         }
 
         if (in_array($changeType, ['config_key_removed', 'config_key_renamed', 'config_key_changed'], true)) {
-            return $this->stringReference($name);
+            return QueryPattern::stringReference($name);
         }
 
         if (in_array($changeType, ['library_removed', 'library_changed', 'library_css_removed', 'library_js_removed', 'library_dependency_removed', 'library_deprecated'], true)) {
-            return $this->libraryReference($name);
+            return QueryPattern::libraryReference($name);
         }
 
         if ($changeType === 'hook_to_attribute') {
@@ -80,15 +82,15 @@ class QueryGenerator
         }
 
         if ($changeType === 'global_replaced') {
-            return $this->globalVariableReference($name);
+            return QueryPattern::globalVariableReference($name);
         }
 
         if ($changeType === 'constant_replaced') {
-            return $this->constantReference($name);
+            return QueryPattern::constantReference($name);
         }
 
         if ($changeType === 'variable_access_replaced') {
-            return $this->propertyAccess($name);
+            return QueryPattern::propertyAccess($name);
         }
 
         if (in_array($changeType, ['sdc_include_removed', 'sdc_embed_removed', 'sdc_call_removed', 'sdc_function_removed'], true)) {
@@ -96,7 +98,7 @@ class QueryGenerator
         }
 
         if ($changeType === 'function_call_rewrite') {
-            return $this->functionCall($name);
+            return QueryPattern::functionCall($name);
         }
 
         if (str_ends_with($changeType, '_removed') || str_ends_with($changeType, '_renamed')) {
@@ -106,69 +108,75 @@ class QueryGenerator
         return null;
     }
 
-    private function functionCall(string $name): string
+    private function functionCall(string $name): QueryPattern
     {
-        $literal = $this->escapeLiteral($name);
-        return "(function_call_expression function: (name) @fn (#eq? @fn \"{$literal}\"))";
+        return QueryPattern::functionCall($name);
     }
 
-    private function methodCall(string $name): string
+    private function methodCall(string $name): QueryPattern
     {
-        // Extract method name from FQN like "Class::method"
-        $parts = explode('::', $name);
-        $methodName = end($parts);
-        $literal = $this->escapeLiteral($methodName);
-        return "(member_call_expression name: (name) @method (#eq? @method \"{$literal}\"))";
+        return QueryPattern::methodCall($name);
     }
 
     /**
      * @param array<string, mixed> $symbol
      */
-    private function classReference(array $symbol, string $name): string
+    private function classReference(array $symbol, string $name): QueryPattern
     {
         $fqn = ltrim((string) ($symbol['fqn'] ?? ''), '\\');
         if ($fqn !== '' && str_contains($fqn, '\\')) {
-            $regex = '^\\\\?' . preg_quote($fqn, '/') . '$';
-            $regexLiteral = $this->escapeLiteral($regex);
-
-            // Match qualified names in specific contexts to reduce noise
-            return "[
-                (namespace_use_clause (qualified_name) @cls_fqn)
-                (object_creation_expression (qualified_name) @cls_fqn)
-                (class_constant_access_expression (qualified_name) @cls_fqn)
-                (scoped_call_expression (qualified_name) @cls_fqn)
-                (base_clause (qualified_name) @cls_fqn)
-            ] (#match? @cls_fqn \"{$regexLiteral}\")";
+            return QueryPattern::classReference($fqn);
         }
 
-        $literal = $this->escapeLiteral($name);
-        return "[
-            (namespace_use_clause (name) @cls)
-            (object_creation_expression (name) @cls)
-            (class_constant_access_expression (name) @cls)
-            (scoped_call_expression (name) @cls)
-            (base_clause (name) @cls)
-        ] (#eq? @cls \"{$literal}\")";
+        return QueryPattern::classReference($name);
     }
 
-    private function serviceReference(string $name): string
+    private function serviceReference(string $name): QueryPattern
     {
-        $literal = $this->escapeLiteral($name);
-        return "(string_content) @svc (#eq? @svc \"{$literal}\")";
+        return QueryPattern::serviceReference($name);
     }
 
-    private function stringReference(string $name): string
+    private function stringReference(string $name): QueryPattern
     {
-        $literal = $this->escapeLiteral($name);
-        return "(string_content) @str (#eq? @str \"{$literal}\")";
+        return QueryPattern::stringReference($name);
     }
 
-    private function signatureMatch(SymbolType $symbolType, string $name): ?string
+    private function signatureMatch(SymbolType $symbolType, string $name): ?QueryPattern
     {
-        $literal = $this->escapeLiteral($name);
         return match ($symbolType) {
-            SymbolType::FunctionSymbol, SymbolType::Hook => "(function_call_expression function: (name) @fn (#eq? @fn \"{$literal}\") arguments: (arguments) @args)",
-            SymbolType::Method => "(member_call_expression name: (name) @method (#eq? @method \"{$literal}\") arguments: (arguments) @args)",
+            SymbolType::FunctionSymbol, SymbolType::Hook => QueryPattern::signatureMatch($name),
+            SymbolType::Method => QueryPattern::signatureMatch($name),
+            default => null,
+        };
+    }
+
+    /**
+     * @param array<string, mixed> $symbol
+     */
+    private function queryBySymbol(array $symbol): ?QueryPattern
+    {
+        $symbolType = SymbolType::fromSymbol($symbol);
+        $name = $this->resolveName($symbol);
+        if ($symbolType === null || $name === '') {
+            return null;
+        }
+
+        return match ($symbolType) {
+            SymbolType::FunctionSymbol, SymbolType::Hook => $this->functionCall($name),
+            SymbolType::Method => $this->methodCall($name),
+            SymbolType::ClassSymbol, SymbolType::InterfaceSymbol, SymbolType::TraitSymbol, SymbolType::Constant => $this->classReference($symbol, $name),
+            SymbolType::Service => $this->serviceReference($name),
+            SymbolType::DrupalLibrary, SymbolType::LibraryUsage => QueryPattern::libraryReference($name),
+            SymbolType::Route, SymbolType::DrupalRoute,
+            SymbolType::Permission, SymbolType::DrupalPermission,
+            SymbolType::ConfigSchema, SymbolType::Library,
+            SymbolType::ModuleInfo, SymbolType::ThemeInfo, SymbolType::ProfileInfo, SymbolType::ThemeEngineInfo,
+            SymbolType::LinkMenu, SymbolType::LinkTask, SymbolType::LinkAction, SymbolType::LinkContextual,
+            SymbolType::Breakpoint, SymbolType::ConfigExport, SymbolType::RecipeManifest, SymbolType::SdcComponent => $this->stringReference($name),
+            SymbolType::SdcInclude, SymbolType::SdcEmbed, SymbolType::SdcCall, SymbolType::SdcFunction,
+            SymbolType::TwigInclude, SymbolType::TwigEmbed, SymbolType::TwigExtends, SymbolType::TwigComponent => $this->twigReference($name),
+            SymbolType::PluginDefinition => $this->classReference($symbol, $name),
+            SymbolType::EventSubscriber => $this->eventReference($name),
             default => null,
         };
     }
@@ -199,128 +207,53 @@ class QueryGenerator
         return $name;
     }
 
+    private function eventReference(string $name): QueryPattern
+    {
+        return QueryPattern::eventReference($name);
+    }
+
     /**
      * @param array<string, mixed> $symbol
      */
-    private function queryBySymbol(array $symbol): ?string
-    {
-        $symbolType = SymbolType::fromSymbol($symbol);
-        $name = $this->resolveName($symbol);
-        if ($symbolType === null || $name === '') {
-            return null;
-        }
-
-        return match ($symbolType) {
-            SymbolType::FunctionSymbol, SymbolType::Hook => $this->functionCall($name),
-            SymbolType::Method => $this->methodCall($name),
-            SymbolType::ClassSymbol, SymbolType::InterfaceSymbol, SymbolType::TraitSymbol, SymbolType::Constant => $this->classReference($symbol, $name),
-            SymbolType::Service => $this->serviceReference($name),
-            SymbolType::DrupalLibrary, SymbolType::LibraryUsage => $this->libraryReference($name),
-            SymbolType::Route, SymbolType::DrupalRoute,
-            SymbolType::Permission, SymbolType::DrupalPermission,
-            SymbolType::ConfigSchema, SymbolType::Library,
-            SymbolType::ModuleInfo, SymbolType::ThemeInfo, SymbolType::ProfileInfo, SymbolType::ThemeEngineInfo,
-            SymbolType::LinkMenu, SymbolType::LinkTask, SymbolType::LinkAction, SymbolType::LinkContextual,
-            SymbolType::Breakpoint, SymbolType::ConfigExport, SymbolType::RecipeManifest, SymbolType::SdcComponent => $this->stringReference($name),
-            SymbolType::SdcInclude, SymbolType::SdcEmbed, SymbolType::SdcCall, SymbolType::SdcFunction,
-            SymbolType::TwigInclude, SymbolType::TwigEmbed, SymbolType::TwigExtends, SymbolType::TwigComponent => $this->twigReference($name),
-            SymbolType::PluginDefinition => $this->classReference($symbol, $name),
-            SymbolType::EventSubscriber => $this->eventReference($name),
-            default => null,
-        };
-    }
-
-    private function eventReference(string $name): string
-    {
-        $literal = $this->escapeLiteral($name);
-        return "[
-            (string_content) @str (#eq? @str \"{$literal}\")
-            (name) @const (#eq? @const \"{$literal}\")
-        ] @item";
-    }
-
-    private function overrideReference(array $symbol, string $name): ?string
+    private function overrideReference(array $symbol, string $name): QueryPattern
     {
         $parentSymbol = $symbol['parent_symbol'] ?? null;
-        if (!$parentSymbol) return null;
+        if (!$parentSymbol) {
+            return QueryPattern::create('', 'inheritance_impact');
+        }
 
         $methodName = $symbol['name'] ?? null;
-        if (!$methodName) return null;
+        if (!$methodName) {
+            return QueryPattern::create('', 'inheritance_impact');
+        }
 
         $parentShort = basename(str_replace('\\', '/', $parentSymbol));
-        $escapedParent = $this->escapeLiteral($parentShort);
-        $escapedMethod = $this->escapeLiteral($methodName);
-
-        // Find classes extending the parent and declaring the method
-        return "(class_declaration 
-            (base_clause (name) @base (#eq? @base \"{$escapedParent}\"))
-            (declaration_list (method_declaration name: (name) @method (#eq? @method \"{$escapedMethod}\")))
-        ) @item";
+        return QueryPattern::overrideReference($parentShort, $methodName);
     }
 
-    private function twigReference(string $name): string
+    private function twigReference(string $name): QueryPattern
     {
-        $literal = $this->escapeLiteral($name);
-        return "[
-            (tag_statement) 
-            (output_directive)
-        ] @item";
-    }
-
-    /**
-     * Match global variable declarations and $GLOBALS access.
-     *
-     * global $user; OR $GLOBALS['user']
-     */
-    private function globalVariableReference(string $name): string
-    {
-        $literal = $this->escapeLiteral($name);
-        return "(global_declaration (variable_name) @var (#eq? @var \"\${$literal}\"))";
-    }
-
-    /**
-     * Match constant references (bare identifiers like LANGUAGE_NONE).
-     */
-    private function constantReference(string $name): string
-    {
-        $literal = $this->escapeLiteral($name);
-        return "(name) @const (#eq? @const \"{$literal}\")";
-    }
-
-    /**
-     * Match property access patterns like $node->nid.
-     */
-    private function propertyAccess(string $name): string
-    {
-        $literal = $this->escapeLiteral($name);
-        return "(member_access_expression name: (name) @prop (#eq? @prop \"{$literal}\"))";
-    }
-
-    /**
-     * Match library references in attach_library() calls and #attached arrays.
-     * Library names follow the pattern 'module/library_name'.
-     */
-    private function libraryReference(string $name): string
-    {
-        $literal = $this->escapeLiteral($name);
-        return "(string_content) @lib (#eq? @lib \"{$literal}\")";
+        return QueryPattern::twigReference($name);
     }
 
     /**
      * Match procedural hook function definitions (e.g. mymodule_form_alter).
      * Used for hook→attribute modernization suggestions.
      */
-    private function proceduralHookReference(string $name): string
+    private function proceduralHookReference(string $name): QueryPattern
     {
-        // Match function calls to the hook name (core invoking it)
-        // and function definitions implementing it
-        $literal = $this->escapeLiteral($name);
+        $literal = self::escapeLiteral($name);
         $regex = ".*_{$literal}$";
-        $regexLiteral = $this->escapeLiteral($regex);
-        return "(function_definition name: (name) @fn (#match? @fn \"{$regexLiteral}\"))";
+        $regexLiteral = self::escapeLiteral($regex);
+        $pattern = "(function_definition name: (name) @fn (#match? @fn \"{$regexLiteral}\"))";
+        
+        return QueryPattern::create($pattern, 'hook_to_attribute', "Procedural hook {$name}");
     }
 
-    private function escapeLiteral(string $value): string
+    /**
+     * Escape a literal for use in tree-sitter query.
+     */
+    private static function escapeLiteral(string $value): string
     {
         return addcslashes($value, "\\\"");
     }

@@ -37,7 +37,7 @@ class SchemaTest extends TestCase
         (new Schema($db))->createAll();
 
         $version = $db->query("SELECT value FROM schema_meta WHERE key = 'schema_version'")->fetch();
-        $this->assertSame('6', $version['value']);
+        $this->assertSame('7', $version['value']);
     }
 
     public function testIdempotent(): void
@@ -88,6 +88,17 @@ class SchemaTest extends TestCase
         $names = array_column($columns, 'name');
 
         $this->assertContains('weight', $names);
+    }
+
+    public function testChangesTableHasQueryVersionColumn(): void
+    {
+        $db = new Database(':memory:');
+        (new Schema($db))->createAll();
+
+        $columns = $db->query("PRAGMA table_info(changes)")->fetchAll();
+        $names = array_column($columns, 'name');
+
+        $this->assertContains('query_version', $names);
     }
 
     public function testCreateAllMigratesLegacyVersionWeights(): void

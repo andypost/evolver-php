@@ -212,6 +212,8 @@ Scans target projects against stored changes.
 | `VersionDetector` | Reads `composer.lock` to find `drupal/core` version. |
 | `MatchCollector` | Runs each change's `ts_query` against a parsed tree. Returns match locations and source text. Includes signature-change post-processing (argument-count heuristic) to reduce noise. |
 
+`ProjectScanner` also enforces a query compatibility guard: if loaded `changes` rows have a stale `query_version`, scan aborts before processing files and instructs the user to re-run `diff` for the affected version pair.
+
 ### Web and Queue Layer (`src/Web/`, `src/Project/`, `src/Queue/`)
 
 Provides the local control plane for managed branch scans.
