@@ -38,6 +38,16 @@ class ChangeSeverityClassifier
             $changeType === 'event_removed' => $this->classifyEventRemoved($oldFqn),
             $changeType === 'hook_removed' => $this->classifyHookRemoved($oldFqn),
 
+            // LIBRARY CHANGES
+            $changeType === 'library_removed' => $this->classifyLibraryRemoved($oldFqn),
+            $changeType === 'library_css_removed',
+            $changeType === 'library_js_removed' => $this->classifyLibraryAssetRemoved($changeType, $oldFqn),
+            $changeType === 'library_dependency_removed' => $this->classifyLibraryDependencyRemoved($oldFqn),
+            $changeType === 'library_deprecated' => $this->classifyLibraryDeprecated($oldFqn),
+
+            // HOOK MODERNIZATION
+            $changeType === 'hook_to_attribute' => $this->classifyHookToAttribute($oldFqn),
+
             // MEDIUM RISK - May break with specific usage
             str_contains($changeType, 'deprecated') => $this->classifyDeprecated($changeType, $language, $oldFqn, $change['deprecation_version'] ?? null),
             $changeType === 'config_removed' => $this->classifyConfigRemoved($oldFqn),
@@ -303,6 +313,57 @@ class ChangeSeverityClassifier
             'confidence' => 0.95,
             'migration_hint' => "Convert annotation to native PHP 8 attribute for better type safety and IDE support.",
             'risk_reason' => 'Modernization opportunity - recommended for better developer experience.',
+        ];
+    }
+
+    private function classifyLibraryRemoved(string $oldFqn): array
+    {
+        return [
+            'severity' => 'breaking',
+            'confidence' => 1.0,
+            'migration_hint' => "Library '{$oldFqn}' was removed. Remove all attach_library() and #attached references.",
+            'risk_reason' => 'Library removed - any code attaching this library will fail.',
+        ];
+    }
+
+    private function classifyLibraryAssetRemoved(string $changeType, string $oldFqn): array
+    {
+        $assetType = str_contains($changeType, 'css') ? 'CSS' : 'JS';
+        return [
+            'severity' => 'breaking',
+            'confidence' => 0.9,
+            'migration_hint' => "{$assetType} asset removed from library '{$oldFqn}'. Check if your code depends on styles or scripts from this library.",
+            'risk_reason' => "{$assetType} asset removed - may cause missing styles or JavaScript errors.",
+        ];
+    }
+
+    private function classifyLibraryDependencyRemoved(string $oldFqn): array
+    {
+        return [
+            'severity' => 'warning',
+            'confidence' => 0.7,
+            'migration_hint' => "Library dependency removed from '{$oldFqn}'. Assets previously loaded via this dependency may no longer be available.",
+            'risk_reason' => 'Library dependency removed - may affect cascading asset loading.',
+        ];
+    }
+
+    private function classifyLibraryDeprecated(string $oldFqn): array
+    {
+        return [
+            'severity' => 'warning',
+            'confidence' => 1.0,
+            'migration_hint' => "Library '{$oldFqn}' is deprecated. Find the replacement library and update references.",
+            'risk_reason' => 'Library deprecated - will be removed in a future version.',
+        ];
+    }
+
+    private function classifyHookToAttribute(string $oldFqn): array
+    {
+        return [
+            'severity' => 'modernization',
+            'confidence' => 0.85,
+            'migration_hint' => "Convert procedural hook '{$oldFqn}' to #[Hook('{$oldFqn}')] attribute on a class method. Move the implementation from the .module file to a Hook class.",
+            'risk_reason' => 'Modernization opportunity - attribute-based hooks are preferred in modern Drupal.',
         ];
     }
 

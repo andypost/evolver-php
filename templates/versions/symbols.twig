@@ -1,5 +1,14 @@
 {% extends "layout.twig" %}
 
+{% set language_labels = {
+    'php': 'PHP',
+    'javascript': 'JavaScript',
+    'css': 'CSS',
+    'yaml': 'YAML',
+    'twig': 'Twig',
+    'drupal_libraries': 'Drupal Libraries',
+} %}
+
 {% block content %}
     <nav class="breadcrumb">
         <a href="/versions">Versions</a> &raquo; <a href="/versions/{{ version.id }}">{{ version.tag }}</a> &raquo; <span>Symbols</span>
@@ -23,12 +32,39 @@
                     <input type="text" name="search" value="{{ search }}" placeholder="FQN or name...">
                 </label>
                 <label>
+                    <span>Language</span>
+                    <select name="language" onchange="this.form.submit()">
+                        <option value="">All Languages</option>
+                        {% for lang, types in types_by_language %}
+                            <option value="{{ lang }}"{% if current_language == lang %} selected{% endif %}>
+                                {{ language_labels[lang] ?? lang }} ({{ types|length }} types)
+                            </option>
+                        {% endfor %}
+                    </select>
+                </label>
+                <label>
                     <span>Type</span>
                     <select name="type">
                         <option value="">All Types</option>
-                        {% for type in types %}
-                            <option value="{{ type }}"{% if current_type == type %} selected{% endif %}>{{ type }}</option>
-                        {% endfor %}
+                        {% if current_language %}
+                            {# Show only types for the selected language #}
+                            {% for type in types_by_language[current_language] ?? [] %}
+                                <option value="{{ type }}"{% if current_type == type %} selected{% endif %}>
+                                    {{ type|replace({'_': ' '}) }}
+                                </option>
+                            {% endfor %}
+                        {% else %}
+                            {# Show all types grouped by language #}
+                            {% for lang, types in types_by_language %}
+                                <optgroup label="{{ language_labels[lang] ?? lang }}">
+                                    {% for type in types %}
+                                        <option value="{{ type }}"{% if current_type == type %} selected{% endif %}>
+                                            {{ type|replace({'_': ' '}) }}
+                                        </option>
+                                    {% endfor %}
+                                </optgroup>
+                            {% endfor %}
+                        {% endif %}
                     </select>
                 </label>
                 <div class="filter-actions">
@@ -51,6 +87,7 @@
                     <tr>
                         <th>FQN</th>
                         <th>Type</th>
+                        <th>Language</th>
                         <th>File</th>
                         <th class="text-right">Lines</th>
                     </tr>
@@ -68,6 +105,7 @@
                                 </div>
                             </td>
                             <td><span class="badge">{{ symbol.symbol_type }}</span></td>
+                            <td><span class="badge badge-lang badge-lang--{{ symbol.language }}">{{ language_labels[symbol.language] ?? symbol.language }}</span></td>
                             <td><code class="path">{{ symbol.file_path }}</code></td>
                             <td class="text-right">{{ symbol.line_start }}-{{ symbol.line_end }}</td>
                         </tr>
@@ -79,13 +117,13 @@
             {% if pagination.total > 1 %}
                 <nav class="pagination">
                     {% if pagination.current > 1 %}
-                        <a href="?page={{ pagination.current - 1 }}{% if current_type %}&type={{ current_type }}{% endif %}{% if search %}&search={{ search }}{% endif %}" class="button">&laquo; Prev</a>
+                        <a href="?page={{ pagination.current - 1 }}{% if current_type %}&type={{ current_type }}{% endif %}{% if current_language %}&language={{ current_language }}{% endif %}{% if search %}&search={{ search }}{% endif %}" class="button">&laquo; Prev</a>
                     {% endif %}
-                    
+
                     <span class="page-info">Page {{ pagination.current }} of {{ pagination.total }}</span>
 
                     {% if pagination.current < pagination.total %}
-                        <a href="?page={{ pagination.current + 1 }}{% if current_type %}&type={{ current_type }}{% endif %}{% if search %}&search={{ search }}{% endif %}" class="button">Next &raquo;</a>
+                        <a href="?page={{ pagination.current + 1 }}{% if current_type %}&type={{ current_type }}{% endif %}{% if current_language %}&language={{ current_language }}{% endif %}{% if search %}&search={{ search }}{% endif %}" class="button">Next &raquo;</a>
                     {% endif %}
                 </nav>
             {% endif %}

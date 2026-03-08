@@ -74,6 +74,8 @@ final class WebServer
         $router->addRoute('POST', '/projects/{id}/runs', new ClosureRequestHandler($this->handleQueueRun(...)));
         $router->addRoute('GET', '/projects/{id}/compare', new ClosureRequestHandler($this->handleCompareRuns(...)));
         $router->addRoute('GET', '/runs/{id}', new ClosureRequestHandler($this->handleRunDetail(...)));
+        $router->addRoute('GET', '/runs/{runId}/extensions/{extensionPath}', new ClosureRequestHandler($this->handleExtensionDetail(...)));
+        $router->addRoute('GET', '/matches/{id}/preview', new ClosureRequestHandler($this->handleMatchPreview(...)));
         $router->addRoute('GET', '/jobs', new ClosureRequestHandler($this->handleJobs(...)));
         $router->addRoute('GET', '/versions/{id}', new ClosureRequestHandler($this->handleVersionDetail(...)));
         $router->addRoute('GET', '/versions/{id}/compare', new ClosureRequestHandler($this->handleVersionCompare(...)));
@@ -122,14 +124,23 @@ final class WebServer
             return $this->text('Version not found.', HttpStatus::NOT_FOUND);
         }
 
-        $stats = $this->api->db()->query(
-            'SELECT symbol_type, COUNT(*) as cnt FROM symbols WHERE version_id = :vid GROUP BY symbol_type ORDER BY cnt DESC',
+        $rows = $this->api->db()->query(
+            'SELECT language, symbol_type, COUNT(*) as cnt FROM symbols WHERE version_id = :vid GROUP BY language, symbol_type ORDER BY language, cnt DESC',
             ['vid' => $versionId]
         )->fetchAll();
 
+        $statsByLanguage = [];
+        $languageTotals = [];
+        foreach ($rows as $row) {
+            $lang = $row['language'];
+            $statsByLanguage[$lang][] = ['symbol_type' => $row['symbol_type'], 'cnt' => $row['cnt']];
+            $languageTotals[$lang] = ($languageTotals[$lang] ?? 0) + (int) $row['cnt'];
+        }
+
         return $this->html('versions/detail.twig', [
             'version' => $version,
-            'stats' => $stats,
+            'stats_by_language' => $statsByLanguage,
+            'language_totals' => $languageTotals,
             'available_versions' => $this->api->versions()->all(),
         ]);
     }
@@ -171,18 +182,20 @@ final class WebServer
         $page = max(1, (int) ($query['page'] ?? 1));
         $limit = 50;
         $offset = ($page - 1) * $limit;
-        $type = $query['type'] ?? null;
-        $search = $query['search'] ?? null;
+        $type = isset($query['type']) && $query['type'] !== '' ? $query['type'] : null;
+        $search = isset($query['search']) && $query['search'] !== '' ? $query['search'] : null;
+        $language = isset($query['language']) && $query['language'] !== '' ? $query['language'] : null;
 
-        $symbols = $this->api->symbols()->findByVersionPaginated($versionId, $offset, $limit, $type, $search);
-        $total = $this->api->symbols()->countByVersionFiltered($versionId, $type, $search);
-        $types = $this->api->symbols()->getSymbolTypes($versionId);
+        $symbols = $this->api->symbols()->findByVersionPaginated($versionId, $offset, $limit, $type, $search, $language);
+        $total = $this->api->symbols()->countByVersionFiltered($versionId, $type, $search, $language);
+        $typesByLanguage = $this->api->symbols()->getSymbolTypesGroupedByLanguage($versionId);
 
         return $this->html('versions/symbols.twig', [
             'version' => $version,
             'symbols' => $symbols,
-            'types' => $types,
+            'types_by_language' => $typesByLanguage,
             'current_type' => $type,
+            'current_language' => $language,
             'search' => $search,
             'pagination' => [
                 'current' => $page,
@@ -445,6 +458,33 @@ final class WebServer
         ]);
     }
 
+    public function handleExtensionDetail(Request $request): Response
+    {
+        $runId = (int) $request->getAttribute('runId');
+        $extensionPath = rawurldecode((string) $request->getAttribute('extensionPath'));
+
+        $run = $this->api->scanRuns()->findById($runId);
+        if ($run === null) {
+            return $this->text('Scan run not found', HttpStatus::NOT_FOUND);
+        }
+
+        $project = $this->api->projects()->findById((int) $run['project_id']);
+        if ($project === null) {
+            return $this->text('Project not found', HttpStatus::NOT_FOUND);
+        }
+
+        $matches = $this->api->getMatchesForExtension($runId, $extensionPath);
+        $summary = $this->api->summarizeExtensionMatches($matches);
+
+        return $this->html('extension-detail.twig', [
+            'run' => $run,
+            'project' => $project,
+            'extension_path' => $extensionPath,
+            'matches' => $matches,
+            'summary' => $summary,
+        ]);
+    }
+
     public function handleCompareRuns(Request $request): Response
     {
         $projectId = $this->routeId($request);
@@ -475,6 +515,117 @@ final class WebServer
             'base_run_id' => $baseRunId,
             'head_run_id' => $headRunId,
         ]);
+    }
+
+    public function handleMatchPreview(Request $request): Response
+    {
+        $matchId = $this->routeId($request);
+        $match = $this->api->matches()->findByIdWithProject($matchId);
+
+        if ($match === null) {
+            return $this->json(['error' => 'Match not found'], HttpStatus::NOT_FOUND);
+        }
+
+        $filePath = (string) ($match['file_path'] ?? '');
+        $projectPath = (string) ($match['project_path'] ?? '');
+        $lineStart = max(1, (int) ($match['line_start'] ?? 1));
+        $lineEnd = max($lineStart, (int) ($match['line_end'] ?? $lineStart));
+
+        // Add context lines (3 lines before and after)
+        $contextLines = 3;
+        $displayStart = max(1, $lineStart - $contextLines);
+        $displayEnd = $lineEnd + $contextLines;
+
+        // Resolve full file path
+        $fullPath = $this->resolveProjectFilePath($projectPath, (string) ($match['project_source_type'] ?? ''), $filePath);
+
+        if ($fullPath === null || !is_file($fullPath)) {
+            return $this->json([
+                'error' => 'Source file not found',
+                'file_path' => $filePath,
+                'resolved_path' => $fullPath,
+            ], HttpStatus::NOT_FOUND);
+        }
+
+        // Read the source file
+        $sourceLines = $this->readSourceLines($fullPath, $displayStart, $displayEnd);
+
+        return $this->json([
+            'file_path' => $filePath,
+            'line_start' => $displayStart,
+            'line_end' => $displayEnd,
+            'highlight_start' => $lineStart,
+            'highlight_end' => $lineEnd,
+            'source' => $sourceLines,
+            'language' => $this->detectLanguage($filePath),
+        ]);
+    }
+
+    private function resolveProjectFilePath(string $projectPath, string $sourceType, string $relativePath): ?string
+    {
+        // For git_remote projects, the project_path is the worktree path
+        // For local_path projects, the project_path is the root directory
+        $basePath = $projectPath;
+
+        // Handle cases where relative_path might be absolute
+        if (strpos($relativePath, '/') === 0) {
+            $fullPath = $relativePath;
+        } else {
+            $fullPath = $basePath . '/' . $relativePath;
+        }
+
+        // Normalize the path
+        $fullPath = str_replace('//', '/', $fullPath);
+
+        return realpath($fullPath) ?: null;
+    }
+
+    /**
+     * Read specific line range from a file.
+     *
+     * @return list<string> Array of lines with line numbers as keys (1-indexed)
+     */
+    private function readSourceLines(string $fullPath, int $startLine, int $endLine): array
+    {
+        if (!is_file($fullPath) || !is_readable($fullPath)) {
+            return [];
+        }
+
+        $lines = [];
+        $file = new \SplFileObject($fullPath);
+
+        // Seek to the starting line (0-indexed)
+        $file->seek($startLine - 1);
+
+        for ($i = $startLine; $i <= $endLine && !$file->eof(); $i++) {
+            $line = rtrim($file->fgets(), "\r\n");
+            $lines[] = [
+                'number' => $i,
+                'content' => $line,
+                'is_highlight' => false,
+            ];
+        }
+
+        return $lines;
+    }
+
+    private function detectLanguage(string $filePath): string
+    {
+        $ext = strtolower(pathinfo($filePath, PATHINFO_EXTENSION));
+
+        return match ($ext) {
+            'php' => 'php',
+            'twig' => 'twig',
+            'yml', 'yaml' => 'yaml',
+            'js', 'jsx' => 'javascript',
+            'ts', 'tsx' => 'typescript',
+            'css' => 'css',
+            'scss', 'sass' => 'scss',
+            'json' => 'json',
+            'md' => 'markdown',
+            'html', 'htm' => 'html',
+            default => 'text',
+        };
     }
 
     public function handleJobs(Request $request): Response
@@ -563,6 +714,15 @@ final class WebServer
     private function text(string $text, int $status = HttpStatus::OK): Response
     {
         return new Response($status, ['content-type' => 'text/plain; charset=utf-8'], $text);
+    }
+
+    private function json(array $data, int $status = HttpStatus::OK): Response
+    {
+        return new Response(
+            $status,
+            ['content-type' => 'application/json; charset=utf-8'],
+            json_encode($data, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)
+        );
     }
 
     private function redirect(string $location): Response

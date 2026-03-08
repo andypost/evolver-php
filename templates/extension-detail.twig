@@ -1,0 +1,58 @@
+{% extends "layout.twig" %}
+
+{% block content %}
+    <section class="hero hero-compact">
+        <div>
+            <p class="eyebrow">Extension Analysis</p>
+            <h1><code>{{ extension_path }}</code></h1>
+            <p class="muted">{{ summary.total }} findings • {{ summary.auto_fixable }} auto-fixable</p>
+        </div>
+        <a class="button" href="/runs/{{ run.id }}">Back to scan</a>
+    </section>
+
+    {# Extension Summary Stats #}
+    <section class="grid three-up">
+        <article class="panel stat-panel">
+            <span class="meta-label">Breaking Changes</span>
+            <strong>{{ summary.by_severity.breaking ?? 0 }}</strong>
+        </article>
+        <article class="panel stat-panel">
+            <span class="meta-label">Modernizations</span>
+            <strong>{{ summary.by_severity.modernization ?? (summary.by_category.Modernization ?? 0) }}</strong>
+        </article>
+        <article class="panel stat-panel">
+            <span class="meta-label">Auto-fixable</span>
+            <strong class="success">{{ summary.auto_fixable }}</strong>
+        </article>
+    </section>
+
+    {# Filter buttons #}
+    <section class="panel">
+        <div class="panel-head">
+            <h2>Findings</h2>
+            <div class="panel-actions">
+                <button class="button small" onclick="toggleFilterSidebar()">
+                    <span id="filter-toggle-icon">☰</span> Filters
+                    <span id="active-filter-count" class="filter-count-badge" style="display: none;">0</span>
+                </button>
+            </div>
+        </div>
+
+        {% include 'fragments/filter-sidebar.twig' %}
+        {% include 'fragments/active-filters.twig' %}
+
+        <div id="view-flat" class="match-view">
+            {% if matches %}
+                <div class="match-list">
+                    {% for match in matches %}
+                        {% include 'fragments/match-item.twig' with {'match': match} %}
+                    {% endfor %}
+                </div>
+            {% else %}
+                <p class="empty">No findings for this extension.</p>
+            {% endif %}
+        </div>
+    </section>
+
+    <script src="/assets/matches.js"></script>
+{% endblock %}

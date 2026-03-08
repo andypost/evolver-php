@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace DrupalEvolver\Indexer;
 
 use DrupalEvolver\Adapter\DrupalCoreAdapter;
+use DrupalEvolver\Indexer\Extractor\AssetUsageExtractor;
 use DrupalEvolver\Indexer\Extractor\CSSExtractor;
 use DrupalEvolver\Indexer\Extractor\DrupalLibrariesExtractor;
 use DrupalEvolver\Indexer\Extractor\JSExtractor;
@@ -49,6 +50,7 @@ final class WorkerPayloadBuilder
         $cssExtractor = new CSSExtractor($parser->registry());
         $libExtractor = new DrupalLibrariesExtractor($parser->registry());
         $twigExtractor = new TwigExtractor($parser->registry());
+        $assetUsageExtractor = new AssetUsageExtractor();
         $simpleExtractor = new SimpleFileExtractor();
 
         $entries = [];
@@ -94,28 +96,42 @@ final class WorkerPayloadBuilder
                     } else {
                         $root = $tree->rootNode();
                         $symbols = $twigExtractor->extract($root, $content, $relativePath, $filePath);
+                        // Also extract asset usage (attach_library calls)
+                        $assetSymbols = $assetUsageExtractor->extract($filePath, $content);
+                        if ($assetSymbols !== []) {
+                            $symbols = array_merge($symbols, $assetSymbols);
                         }
-                        } else {
-                        $tree = $parser->parse($content, $language);
-                        if ($tree === null) {
+                    }
+                } else {
+                    $tree = $parser->parse($content, $language);
+                    if ($tree === null) {
                         continue;
-                        }
+                    }
 
-                        $root = $tree->rootNode();
-                        $extractor = match ($language) {
+                    $root = $tree->rootNode();
+                    $extractor = match ($language) {
                         'php' => $phpExtractor,
                         'yaml' => $yamlExtractor,
                         'javascript' => $jsExtractor,
                         'css' => $cssExtractor,
                         'drupal_libraries' => $libExtractor,
                         default => null,
-                        };
+                    };
 
-                        if ($extractor === null) {
-                            continue;
+                    if ($extractor === null) {
+                        continue;
+                    }
+
+                    $symbols = $extractor->extract($root, $content, $relativePath, $filePath);
+
+                    // Extract asset usage from PHP files
+                    if ($language === 'php') {
+                        $assetSymbols = $assetUsageExtractor->extract($filePath, $content);
+                        if ($assetSymbols !== []) {
+                            $symbols = array_merge($symbols, $assetSymbols);
                         }
-
-                        $symbols = $extractor->extract($root, $content, $relativePath, $filePath);                        }
+                    }
+                }
                 // Tag symbols with SDC context if present
                 if ($currentSdcId !== null) {
                     foreach ($symbols as &$symbol) {

@@ -136,7 +136,7 @@ final class MatchRepo
     public function findByRun(int $scanRunId): array
     {
         return $this->db->query(
-            'SELECT m.*, 
+            'SELECT m.*,
                     COALESCE(m.change_type, c.change_type) as change_type,
                     COALESCE(m.severity, c.severity) as severity,
                     COALESCE(m.migration_hint, c.migration_hint) as migration_hint,
@@ -144,10 +144,46 @@ final class MatchRepo
                     c.diff_json, c.new_fqn, c.fix_method
              FROM code_matches m
              LEFT JOIN changes c ON m.change_id = c.id
-             WHERE m.scan_run_id = :scan_run_id 
+             WHERE m.scan_run_id = :scan_run_id
              ORDER BY m.file_path, m.line_start, m.id',
             ['scan_run_id' => $scanRunId]
         )->fetchAll();
+    }
+
+    public function findById(int $id): ?array
+    {
+        return $this->db->query(
+            'SELECT m.*,
+                    COALESCE(m.change_type, c.change_type) as change_type,
+                    COALESCE(m.severity, c.severity) as severity,
+                    COALESCE(m.migration_hint, c.migration_hint) as migration_hint,
+                    COALESCE(m.old_fqn, c.old_fqn) as old_fqn,
+                    c.diff_json, c.new_fqn, c.fix_method
+             FROM code_matches m
+             LEFT JOIN changes c ON m.change_id = c.id
+             WHERE m.id = :id',
+            ['id' => $id]
+        )->fetch();
+    }
+
+    public function findByIdWithProject(int $id): ?array
+    {
+        return $this->db->query(
+            'SELECT m.*,
+                    COALESCE(m.change_type, c.change_type) as change_type,
+                    COALESCE(m.severity, c.severity) as severity,
+                    COALESCE(m.migration_hint, c.migration_hint) as migration_hint,
+                    COALESCE(m.old_fqn, c.old_fqn) as old_fqn,
+                    c.diff_json, c.new_fqn, c.fix_method,
+                    p.path as project_path,
+                    p.source_type as project_source_type
+             FROM code_matches m
+             LEFT JOIN changes c ON m.change_id = c.id
+             JOIN scan_runs sr ON m.scan_run_id = sr.id
+             JOIN projects p ON sr.project_id = p.id
+             WHERE m.id = :id',
+            ['id' => $id]
+        )->fetch();
     }
 
     #[\NoDiscard]

@@ -21,9 +21,16 @@
                         <a class="project-card" href="/projects/{{ project.id }}">
                             <div class="project-card__head">
                                 <strong>{{ project.name }}</strong>
-                                <span class="pill">{{ project.source_type|replace({'_':' '}) }}</span>
+                                {% if project.type %}
+                                    <span class="pill type-{{ project.type }} type-badge">{{ project.type|replace({'-': ' '})|title }}</span>
+                                {% endif %}
                             </div>
-                            <div class="muted">{{ project.remote_url ?: project.path }}</div>
+                            <div class="muted">
+                                {{ project.remote_url ?: project.path }}
+                                {% if project.package_name %}
+                                    <br><small><code>{{ project.package_name }}</code></small>
+                                {% endif %}
+                            </div>
                             <div class="project-card__meta">
                                 <span>Default branch: {{ project.default_branch_record.branch_name ?? project.default_branch ?? 'n/a' }}</span>
                                 <span>Latest run: {{ project.latest_run.status ?? 'none' }}</span>

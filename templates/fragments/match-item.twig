@@ -1,0 +1,56 @@
+{% set match_category = match.change_type matches '/(deprecated|renamed|to_attribute|rewrite|modernization)/' ? 'modernization' : (match.severity == 'breaking' ? 'breaking' : 'other') %}
+<div class="match-item severity-{{ match.severity }}"
+     data-category="{{ match_category }}"
+     data-fixable="{{ match.fix_method == 'template' ? 'yes' : 'no' }}"
+     data-change-type="{{ match.change_type }}"
+     data-match-id="{{ match.id }}">
+    <div class="match-header" onclick="toggleCodePreview({{ match.id }}, this)">
+        <div class="match-header-left">
+            <span class="match-file"><code>{{ match.file_path }}:{{ match.line_start }}</code></span>
+            <span class="preview-hint">Click to preview code</span>
+        </div>
+        <div class="match-header-right">
+            <span class="status-tag status-{{ match.severity }}">{{ match.severity }}</span>
+            {% if match.fix_method == 'template' %}
+                <span class="pill success">Auto-fix available</span>
+            {% endif %}
+            <span class="preview-icon">▼</span>
+        </div>
+    </div>
+
+    <div class="match-body">
+        <h3>{{ match.old_fqn }} <span class="muted small">{{ match.change_type|replace({'_': ' '}) }}</span></h3>
+
+        {% if match.migration_hint %}
+            <div class="migration-advice">
+                <strong>Recommendation:</strong> {{ match.migration_hint|nl2br }}
+            </div>
+        {% endif %}
+
+        {% if match.diff_json %}
+            {% set diff = match.diff_json|json_decode %}
+            <div class="match-details">
+                {% if match.change_type == 'signature_changed' or match.change_type == 'inheritance_impact' %}
+                    <p class="small">Method signature shifted:</p>
+                    <div class="diff-block">
+                        {% for c in diff.changes %}
+                            <div class="diff-line">
+                                {% if c.type == 'parameter_added' %}
+                                    <span class="diff-plus">+ arg {{ c.position }}: {{ c.param.name }}{{ c.param.type ? ' (' ~ c.param.type ~ ')' }}</span>
+                                {% elseif c.type == 'parameter_removed' %}
+                                    <span class="diff-minus">- arg {{ c.position }}: {{ c.param.name }}</span>
+                                {% elseif c.type == 'parameter_type_changed' %}
+                                    <span class="diff-change">Δ arg {{ c.position }}: {{ c.old_type }} → {{ c.new_type }}</span>
+                                {% endif %}
+                            </div>
+                        {% endfor %}
+                    </div>
+                {% endif %}
+            </div>
+        {% endif %}
+    </div>
+
+    <div id="preview-{{ match.id }}" class="code-preview" style="display: none;">
+        <div class="code-loading">Loading...</div>
+    </div>
+</div>

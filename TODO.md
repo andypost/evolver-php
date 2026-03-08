@@ -18,39 +18,40 @@ Principle:
 
 Top priority: custom modules, custom themes, custom profiles, and site-level app code.
 
-### 1.1 Project typing
-- [ ] Detect and store project types:
+### 1.1 Project typing ✅ DONE
+- [x] Detect and store project types:
   - `drupal-module`
   - `drupal-theme`
   - `drupal-profile`
   - `drupal-site`
-- [ ] Detect project metadata from `composer.json`, `*.info.yml`, and directory shape
-- [ ] Persist `project_type`, package name, and root module/theme name in project records
+  - `drupal-core`
+  - `symfony`
+  - `generic`
+- [x] Detect project metadata from `composer.json`, `*.info.yml`, and directory shape
+- [x] Persist `project_type`, package name, and root module/theme name in project records
+- [x] `ProjectTypeDetector` fully implemented with metadata extraction
+- [x] Database schema has `package_name` and `root_name` columns
 
-### 1.2 Better Drupal-specific app analysis
-- [ ] Expand analysis beyond raw PHP symbol hits:
-  - services
-  - routes
-  - permissions
-  - config schema
-  - plugins
-  - event subscribers
-  - hooks and `#[Hook]` migrations
-  - library usage across JS/CSS assets
-- [ ] Add cross-file relations between PHP, YAML, and frontend assets inside the scanned app
-- [ ] Group report output by custom extension and by regression category
+### 1.2 Better Drupal-specific app analysis ✅ DONE
+- [x] Services extraction (YAMLExtractor)
+- [x] Routes extraction (YAMLExtractor)
+- [x] Permissions extraction (YAMLExtractor)
+- [x] Plugins extraction (YAMLExtractor)
+- [x] Config schema extraction (YAMLExtractor)
+- [x] Cross-file relations (SymbolRelationBuilder: services→classes, routes→controllers, plugins→classes)
+- [x] Extension impact graph (DatabaseApi::getExtensionImpactGraph)
+- [x] Group report output by extension and category (UI views with toggle buttons)
+- [x] **Library usage** across JS/CSS assets (libraries.yml → asset linking) via `AssetUsageExtractor`
+- [x] **Frontend assets** parsing and relation tracking via `DrupalLibrariesExtractor`
+- [x] **Hooks detection** - procedural hook → `#[Hook]` attribute suggestions via `VersionDiffer::detectHookModernization()`
+- [x] **Event subscribers** extraction from YAML via `YAMLExtractor`
+- [x] **Per-extension drill-down** pages (`/runs/{id}/extensions/{path}`) via `extension-detail.twig`
 
-### 1.3 Upgrade-focused regression reporting
-- [ ] Add higher-level findings for:
-  - removed API usage
-  - renamed service IDs
-  - route/controller target changes
-  - signature changes
-  - config key removals and renames
-  - plugin ID drift
-  - namespace moves
-- [ ] Add severity plus confidence plus "why this is risky" summaries
-- [ ] Add "likely mechanical fix" vs "manual review required" classification
+### 1.3 Upgrade-focused regression reporting ✅ DONE
+- [x] Higher-level findings for removed APIs, renamed service IDs, route/controller changes, signature changes, config changes, plugin drift, namespace moves
+- [x] Severity, confidence, and "why this is risky" summaries via `ChangeSeverityClassifier`
+- [x] "Likely mechanical fix" vs "manual review required" classification via `fix_method` field
+- [x] Migration hints inline in scan results
 
 ### 1.4 Expected implementation size
 - 10-15 existing files touched
@@ -62,6 +63,103 @@ Top priority: custom modules, custom themes, custom profiles, and site-level app
 - high value for upgrade regressions in custom Drupal code
 - realistic target: catch a large share of framework-driven breakage before runtime
 - low value for pure business-logic regressions with unchanged API shape
+
+### Phase 1 UI Enhancements Needed
+
+The backend for Phase 1.2 and 1.3 is largely complete, but the UI needs enhancements to expose this functionality:
+
+#### Missing UI Features
+- [x] **Project metadata display** - Show `package_name` and `root_name` in project detail and dashboard ✅ DONE
+- [x] **Project type badges** - Visual indicators (icon + color) for drupal-module, drupal-theme, etc. ✅ DONE
+- [x] **Modernization filter** - Quick filter to show only modernization suggestions ✅ DONE
+- [x] **Per-extension drill-down** - Click an extension in grouping view to get dedicated page with just that extension's findings ✅ DONE
+- [x] **Code preview panel** - Show actual source code snippets for matches (with syntax highlighting) ✅ DONE
+- [x] **Advanced filtering** - Collapsible sidebar with severity, category, fixability, change type, and file pattern filters ✅ DONE
+- [ ] **Bulk apply fixes** - UI to select and apply multiple auto-fixable changes at once
+- [ ] **Export results** - Download scan results as JSON/CSV/markdown report
+- [ ] **Diff visualization** - Inline diff display for signature changes (already partially in template, could be enhanced)
+- [ ] **Extension dependency graph** - Visual representation of extension dependencies and impact
+
+### Phase 1 Completion Checklist
+
+#### Backend (remaining)
+1. **Library/Asset Analysis** ✅ DONE
+   - Parse `*.libraries.yml` files via `DrupalLibrariesExtractor`
+   - Extract JS/CSS dependencies, external assets, deprecations
+   - Track library usage in PHP and Twig via `AssetUsageExtractor`
+   - `LibraryDiffer` generates changes for library removals, asset removals, dependency removals, deprecations
+   - Integrated into `VersionDiffer` pipeline
+   - `QueryGenerator` handles `library_*` change types
+   - `ChangeSeverityClassifier` classifies library-related changes
+
+2. **Enhanced Hooks Detection** ✅ DONE
+   - PHPExtractor detects procedural hooks (`.module` files) and `#[Hook]` attributes
+   - `VersionDiffer::detectHookModernization()` compares procedural vs attribute hooks
+   - Generates `hook_to_attribute` modernization suggestions with migration hints
+   - `QueryGenerator` generates tree-sitter queries for procedural hook functions
+   - `ChangeSeverityClassifier` classifies `hook_to_attribute` as modernization
+
+3. **Event Subscribers** ✅ DONE
+   - `YAMLExtractor` emits `event_subscriber` symbols from `*.services.yml` when service has `event_subscriber` tag
+   - Links to subscriber class via metadata
+   - Works alongside existing PHP-side `EventSubscriberInterface` detection
+
+#### UI (remaining)
+1. **Dashboard Enhancements** ✅ DONE
+   - Project type badges on project cards ✅
+   - Package name display ✅
+
+2. **Project Detail Enhancements** ✅ DONE
+   - Show package_name and root_name ✅
+   - Quick actions via `selectBranchForScan()` ✅
+
+3. **Scan Results Enhancements** ✅ DONE
+   - Code preview panel with click-to-expand (`toggleCodePreview`) ✅
+   - Advanced filtering sidebar (`filter-sidebar.twig`, `matches.js`) ✅
+   - Modernization filter ✅
+   - Per-extension drill-down pages (`extension-detail.twig`) ✅
+   - Match item fragment extraction (`match-item.twig`) ✅
+
+4. **Version Detail Enhancements** ✅ DONE
+   - Language-grouped symbol distribution cards ✅
+   - Clickable cards linking to symbols browser with language filter ✅
+   - Symbols browser with language/type filtering ✅
+
+5. **Remaining UI work** (Phase 2+)
+   - [ ] Bulk apply fixes
+   - [ ] Export results (JSON/CSV/markdown)
+   - [ ] Enhanced diff visualization
+   - [ ] Extension dependency graph visualization
+
+### UI Testing Strategy
+
+All UI tests live in `tests/Unit/Web/WebServerTemplateTest.php`. Tests render Twig templates
+directly with mock data — no HTTP server or browser required.
+
+#### What we test
+- **Render smoke tests** — every template renders without Twig errors given realistic context arrays
+- **Fragment inclusion** — shared fragments (`match-item.twig`, `filter-sidebar.twig`, `active-filters.twig`) are included and produce expected DOM elements
+- **Data attributes** — `data-category`, `data-fixable`, `data-change-type`, `data-match-id` are present for JS filtering
+- **Balanced HTML** — open/close counts for `<div>` and `<section>` tags match (catches broken nesting)
+- **Change type coverage** — each change type (`function_removed`, `library_removed`, `hook_to_attribute`, `signature_changed`, etc.) renders its specific UI elements (severity badge, diff block, migration advice)
+- **Empty states** — templates degrade gracefully when data arrays are empty
+
+#### What we don't test (and why)
+- **JavaScript behavior** — `matches.js` filtering, code preview fetch, view toggling. These are client-side and would need a browser harness (Playwright/Cypress). Low priority since the JS is thin glue code.
+- **CSS rendering** — Visual correctness of `.lang-card`, `.badge-lang--*`, hover states. Would need visual regression testing. Not worth the tooling cost at this stage.
+- **WebServer handler wiring** — Route registration and request→response flow. Covered implicitly by integration tests in Docker.
+
+#### Adding a new template test
+1. Add a `testNewTemplateRenders()` method that calls `$this->twig->render()` with realistic mock data
+2. Assert key DOM elements are present (`assertStringContainsString`)
+3. For templates using fragments, verify fragment-specific selectors (e.g., `id="filter-sidebar"`)
+4. Add a balanced tags check if the template has non-trivial nesting
+5. For new change types, add a `testMatchItemRendersNewType()` via `renderMatchItem(['change_type' => '...'])`
+
+#### Convention
+- Mock data helpers (`makeMatch()`, `makeRun()`, `makeSummary()`) keep test data DRY
+- Tests are grouped by template with comment headers (`// -- Dashboard ---`)
+- Render helpers (`renderRunDetail()`, `renderExtensionDetail()`, `renderMatchItem()`) encapsulate template+context pairs
 
 ## Phase 2 - Drupal App Analysis Depth
 

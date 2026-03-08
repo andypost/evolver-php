@@ -110,10 +110,10 @@ class SymbolRepo
     }
 
     #[\NoDiscard]
-    public function findByVersionPaginated(int $versionId, int $offset = 0, int $limit = 100, ?string $type = null, ?string $search = null): array
+    public function findByVersionPaginated(int $versionId, int $offset = 0, int $limit = 100, ?string $type = null, ?string $search = null, ?string $language = null): array
     {
-        $sql = 'SELECT s.*, f.file_path 
-                FROM symbols s 
+        $sql = 'SELECT s.*, f.file_path
+                FROM symbols s
                 JOIN parsed_files f ON s.file_id = f.id
                 WHERE s.version_id = :vid';
         $params = ['vid' => $versionId];
@@ -121,6 +121,11 @@ class SymbolRepo
         if ($type) {
             $sql .= ' AND s.symbol_type = :type';
             $params['type'] = $type;
+        }
+
+        if ($language) {
+            $sql .= ' AND s.language = :language';
+            $params['language'] = $language;
         }
 
         if ($search) {
@@ -136,7 +141,7 @@ class SymbolRepo
     }
 
     #[\NoDiscard]
-    public function countByVersionFiltered(int $versionId, ?string $type = null, ?string $search = null): int
+    public function countByVersionFiltered(int $versionId, ?string $type = null, ?string $search = null, ?string $language = null): int
     {
         $sql = 'SELECT COUNT(*) as cnt FROM symbols s WHERE s.version_id = :vid';
         $params = ['vid' => $versionId];
@@ -144,6 +149,11 @@ class SymbolRepo
         if ($type) {
             $sql .= ' AND s.symbol_type = :type';
             $params['type'] = $type;
+        }
+
+        if ($language) {
+            $sql .= ' AND s.language = :language';
+            $params['language'] = $language;
         }
 
         if ($search) {
@@ -161,6 +171,30 @@ class SymbolRepo
             'SELECT DISTINCT symbol_type FROM symbols WHERE version_id = :vid ORDER BY symbol_type',
             ['vid' => $versionId]
         )->fetchAll(\PDO::FETCH_COLUMN);
+    }
+
+    /**
+     * Get symbol types grouped by language for a version.
+     *
+     * @return array<string, list<string>> Language => [symbol_type, ...]
+     */
+    #[\NoDiscard]
+    public function getSymbolTypesGroupedByLanguage(int $versionId): array
+    {
+        $rows = $this->db->query(
+            'SELECT DISTINCT language, symbol_type
+             FROM symbols
+             WHERE version_id = :vid
+             ORDER BY language, symbol_type',
+            ['vid' => $versionId]
+        )->fetchAll();
+
+        $grouped = [];
+        foreach ($rows as $row) {
+            $grouped[(string) $row['language']][] = (string) $row['symbol_type'];
+        }
+
+        return $grouped;
     }
 
     #[\NoDiscard]
@@ -189,5 +223,18 @@ class SymbolRepo
             'SELECT COUNT(*) as cnt FROM symbols WHERE version_id = :vid',
             ['vid' => $versionId]
         )->fetch()['cnt'];
+    }
+
+    #[\NoDiscard]
+    public function findByTypeAndVersion(int $versionId, string $symbolType): array
+    {
+        return $this->db->query(
+            'SELECT s.*, f.file_path
+             FROM symbols s
+             JOIN parsed_files f ON s.file_id = f.id
+             WHERE s.version_id = :vid AND s.symbol_type = :type
+             ORDER BY s.fqn',
+            ['vid' => $versionId, 'type' => $symbolType]
+        )->fetchAll();
     }
 }

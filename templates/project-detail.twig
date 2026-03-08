@@ -8,7 +8,7 @@
             <p class="muted">
                 {{ project.remote_url ?: project.path }}
                 {% if project.type %}
-                <span class="badge">{{ project.type }}</span>
+                <span class="pill type-{{ project.type }}">{{ project.type|replace({'-': ' '})|title }}</span>
                 {% endif %}
             </p>
         </div>
@@ -23,7 +23,33 @@
         <div class="status-grid">
             <div>
                 <span class="meta-label">Project type</span>
-                <strong>{{ project.type ?: 'Not detected' }}</strong>
+                <strong>
+                    {% if project.type %}
+                        <span class="pill type-{{ project.type }}">{{ project.type|replace({'-': ' '})|title }}</span>
+                    {% else %}
+                        Not detected
+                    {% endif %}
+                </strong>
+            </div>
+            <div>
+                <span class="meta-label">Package name</span>
+                <strong>
+                    {% if project.package_name %}
+                        <code>{{ project.package_name }}</code>
+                    {% else %}
+                        <span class="muted">Not detected</span>
+                    {% endif %}
+                </strong>
+            </div>
+            <div>
+                <span class="meta-label">Display name</span>
+                <strong>
+                    {% if project.root_name %}
+                        {{ project.root_name }}
+                    {% else %}
+                        <span class="muted">Not detected</span>
+                    {% endif %}
+                </strong>
             </div>
             <div>
                 <span class="meta-label">Source</span>
@@ -163,35 +189,7 @@
         </article>
     </section>
 
-    <script>
-        function selectBranchForScan(branchName, targetVersion, fromVersion) {
-            const form = document.getElementById('scan-form');
-            if (!form) return;
-
-            form.querySelector('select[name=branch_name]').value = branchName;
-            
-            if (targetVersion) {
-                document.getElementById('target_core_version').value = targetVersion;
-            }
-            
-            if (fromVersion) {
-                document.getElementById('from_core_version').value = fromVersion;
-            } else if (fromVersion === '') {
-                document.getElementById('from_core_version').value = '';
-            }
-
-            const panel = document.getElementById('scan-form-panel');
-            panel.scrollIntoView({ behavior: 'smooth' });
-            
-            // Visual highlight
-            panel.style.transition = 'background-color 0.3s ease';
-            const originalBg = panel.style.backgroundColor;
-            panel.style.backgroundColor = 'rgba(11, 110, 79, 0.1)';
-            setTimeout(() => {
-                panel.style.backgroundColor = originalBg;
-            }, 1000);
-        }
-    </script>
+    
 
     {# Recent Scan Runs #}
     <section class="panel">

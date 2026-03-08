@@ -901,6 +901,67 @@ class DatabaseApi
         };
     }
 
+    /**
+     * Get matches for a specific extension within a scan run.
+     *
+     * @param int $scanRunId The scan run ID
+     * @param string $extensionPath The extension path (e.g., "modules/custom/my_module")
+     * @return list<array> List of matches for this extension
+     */
+    #[\NoDiscard]
+    public function getMatchesForExtension(int $scanRunId, string $extensionPath): array
+    {
+        return $this->database->query(
+            "SELECT cm.*,
+                    COALESCE(cm.change_type, c.change_type) as change_type,
+                    COALESCE(cm.severity, c.severity) as severity,
+                    COALESCE(cm.migration_hint, c.migration_hint) as migration_hint,
+                    COALESCE(cm.old_fqn, c.old_fqn) as old_fqn,
+                    c.diff_json, c.new_fqn, c.fix_method
+             FROM code_matches cm
+             LEFT JOIN changes c ON cm.change_id = c.id
+             WHERE cm.scan_run_id = :scan_run_id
+               AND cm.file_path LIKE :extension_pattern
+             ORDER BY cm.file_path, cm.line_start, cm.id",
+            [
+                'scan_run_id' => $scanRunId,
+                'extension_pattern' => $extensionPath . '%',
+            ]
+        )->fetchAll();
+    }
+
+    /**
+     * Summarize matches for an extension.
+     *
+     * @param list<array> $matches List of matches
+     * @return array{total: int, auto_fixable: int, by_severity: array<string, int>, by_category: array<string, int>}
+     */
+    #[\NoDiscard]
+    public function summarizeExtensionMatches(array $matches): array
+    {
+        $summary = [
+            'total' => count($matches),
+            'auto_fixable' => 0,
+            'by_severity' => [],
+            'by_category' => [],
+        ];
+
+        foreach ($matches as $match) {
+            $severity = (string) ($match['severity'] ?? 'unknown');
+            $summary['by_severity'][$severity] = ($summary['by_severity'][$severity] ?? 0) + 1;
+
+            if (($match['fix_method'] ?? '') === 'template') {
+                $summary['auto_fixable']++;
+            }
+
+            $changeType = (string) ($match['change_type'] ?? 'unknown');
+            $category = $this->categorizeChangeType($changeType);
+            $summary['by_category'][$category] = ($summary['by_category'][$category] ?? 0) + 1;
+        }
+
+        return $summary;
+    }
+
     // -- Status / utility queries --------------------------------------------
 
     /**

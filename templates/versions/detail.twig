@@ -69,26 +69,44 @@
             </div>
         </section>
 
-        <section class="panel">
-            <div class="panel-head">
-                <h2>Symbol Distribution</h2>
-            </div>
-            <table class="table">
-                <thead>
-                <tr>
-                    <th>Type</th>
-                    <th class="text-right">Count</th>
-                </tr>
-                </thead>
-                <tbody>
-                {% for row in stats %}
-                    <tr>
-                        <td><code>{{ row.symbol_type }}</code></td>
-                        <td class="text-right">{{ row.cnt|number_format }}</td>
-                    </tr>
-                {% endfor %}
-                </tbody>
-            </table>
-        </section>
     </div>
+
+    {% set language_labels = {
+        'php': 'PHP', 'javascript': 'JavaScript', 'css': 'CSS',
+        'yaml': 'YAML', 'twig': 'Twig', 'drupal_libraries': 'Libraries'
+    } %}
+    {% set type_labels = {
+        'function': 'Functions', 'class': 'Classes', 'method': 'Methods',
+        'constant': 'Constants', 'variable': 'Variables', 'hook': 'Hooks',
+        'css_selector': 'Selectors', 'service': 'Services', 'route': 'Routes',
+        'permission': 'Permissions', 'drupal_library': 'Libraries',
+        'library_usage': 'Library Usages', 'interface': 'Interfaces',
+        'trait': 'Traits', 'enum': 'Enums', 'template': 'Templates',
+        'config_schema': 'Config Schemas', 'content_type': 'Content Types',
+        'field': 'Fields', 'plugin': 'Plugins', 'event': 'Events'
+    } %}
+
+    <section>
+        <div class="panel-head">
+            <h2>Symbol Distribution</h2>
+        </div>
+        <div class="grid three-up">
+            {% for lang, types in stats_by_language %}
+                <a href="/versions/{{ version.id }}/symbols?language={{ lang }}" class="lang-card lang-card--{{ lang }}">
+                    <div class="lang-card__head">
+                        <span class="badge badge-lang badge-lang--{{ lang }}">{{ language_labels[lang] ?? lang }}</span>
+                        <span class="lang-card__total">{{ language_totals[lang]|number_format }}</span>
+                    </div>
+                    <ul class="lang-card__types">
+                        {% for row in types %}
+                            <li>
+                                <span>{{ type_labels[row.symbol_type] ?? row.symbol_type }}</span>
+                                <span class="muted">{{ row.cnt|number_format }}</span>
+                            </li>
+                        {% endfor %}
+                    </ul>
+                </a>
+            {% endfor %}
+        </div>
+    </section>
 {% endblock %}

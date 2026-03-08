@@ -148,8 +148,41 @@ class YAMLExtractor implements ExtractorInterface
                     'byte_start' => $node->startByte(),
                     'byte_end' => $node->endByte(),
                 ];
+
+                // Emit event_subscriber symbol if service has event_subscriber tag
+                $this->extractEventSubscriberFromService($keyText, $serviceData, $node);
             }
         }
+    }
+
+    private function extractEventSubscriberFromService(string $serviceId, array $serviceData, Node $node): void
+    {
+        $tags = (string) ($serviceData['tags'] ?? '');
+        if ($tags === '' || !str_contains($tags, 'event_subscriber')) {
+            return;
+        }
+
+        $class = $serviceData['class'] ?? $serviceId;
+
+        $this->symbols[] = [
+            'language' => 'yaml',
+            'symbol_type' => 'event_subscriber',
+            'fqn' => $serviceId,
+            'name' => $serviceId,
+            'namespace' => null,
+            'parent_symbol' => null,
+            'signature_hash' => hash('sha256', "event_subscriber|{$serviceId}|{$class}"),
+            'metadata_json' => json_encode([
+                'service_id' => $serviceId,
+                'class' => $class,
+                'source' => 'services_yml',
+            ]),
+            'source_text' => $tags,
+            'line_start' => $node->startPoint()['row'] + 1,
+            'line_end' => $node->endPoint()['row'] + 1,
+            'byte_start' => $node->startByte(),
+            'byte_end' => $node->endByte(),
+        ];
     }
 
     private function extractServiceProps(Node $props, array &$serviceData): void

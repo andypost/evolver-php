@@ -1,0 +1,124 @@
+{# Advanced Filter Sidebar #}
+        <aside id="filter-sidebar" class="filter-sidebar" style="display: none;">
+            <div class="filter-sidebar-header">
+                <h3>Filters</h3>
+                <button class="filter-close" onclick="toggleFilterSidebar()">×</button>
+            </div>
+
+            <div class="filter-sections">
+                {# Severity Filter #}
+                <details class="filter-section" open>
+                    <summary>
+                        <span class="filter-section-title">Severity</span>
+                        <span class="filter-count" id="severity-count">0 selected</span>
+                    </summary>
+                    <div class="filter-options">
+                        <label class="filter-option">
+                            <input type="checkbox" class="filter-checkbox" data-filter-type="severity" value="breaking">
+                            <span class="severity-indicator breaking"></span>
+                            Breaking
+                        </label>
+                        <label class="filter-option">
+                            <input type="checkbox" class="filter-checkbox" data-filter-type="severity" value="deprecation">
+                            <span class="severity-indicator deprecation"></span>
+                            Deprecation
+                        </label>
+                        <label class="filter-option">
+                            <input type="checkbox" class="filter-checkbox" data-filter-type="severity" value="modernization">
+                            <span class="severity-indicator modernization"></span>
+                            Modernization
+                        </label>
+                    </div>
+                </details>
+
+                {# Category Filter #}
+                <details class="filter-section">
+                    <summary>
+                        <span class="filter-section-title">Category</span>
+                        <span class="filter-count" id="category-count">0 selected</span>
+                    </summary>
+                    <div class="filter-options">
+                        <label class="filter-option">
+                            <input type="checkbox" class="filter-checkbox" data-filter-type="category" value="Removals">
+                            <span>Removals</span>
+                        </label>
+                        <label class="filter-option">
+                            <input type="checkbox" class="filter-checkbox" data-filter-type="category" value="Modernization">
+                            <span>Modernization</span>
+                        </label>
+                        <label class="filter-option">
+                            <input type="checkbox" class="filter-checkbox" data-filter-type="category" value="Signatures">
+                            <span>Signatures</span>
+                        </label>
+                        <label class="filter-option">
+                            <input type="checkbox" class="filter-checkbox" data-filter-type="category" value="Frontend">
+                            <span>Frontend</span>
+                        </label>
+                    </div>
+                </details>
+
+                {# Fixability Filter #}
+                <details class="filter-section">
+                    <summary>
+                        <span class="filter-section-title">Fixability</span>
+                        <span class="filter-count" id="fixability-count">0 selected</span>
+                    </summary>
+                    <div class="filter-options">
+                        <label class="filter-option">
+                            <input type="checkbox" class="filter-checkbox" data-filter-type="fixability" value="fixable">
+                            <span>✓ Auto-fixable</span>
+                        </label>
+                        <label class="filter-option">
+                            <input type="checkbox" class="filter-checkbox" data-filter-type="fixability" value="manual">
+                            <span>⊘ Manual review</span>
+                        </label>
+                    </div>
+                </details>
+
+                {# Change Type Filter #}
+                <details class="filter-section">
+                    <summary>
+                        <span class="filter-section-title">Change Type</span>
+                        <span class="filter-count" id="changetype-count">0 selected</span>
+                    </summary>
+                    <div class="filter-options">
+                        <label class="filter-option">
+                            <input type="checkbox" class="filter-checkbox" data-filter-type="change_type" value="removed">
+                            <span>Removed</span>
+                        </label>
+                        <label class="filter-option">
+                            <input type="checkbox" class="filter-checkbox" data-filter-type="change_type" value="deprecated">
+                            <span>Deprecated</span>
+                        </label>
+                        <label class="filter-option">
+                            <input type="checkbox" class="filter-checkbox" data-filter-type="change_type" value="renamed">
+                            <span>Renamed</span>
+                        </label>
+                        <label class="filter-option">
+                            <input type="checkbox" class="filter-checkbox" data-filter-type="change_type" value="signature_changed">
+                            <span>Signature Changed</span>
+                        </label>
+                        <label class="filter-option">
+                            <input type="checkbox" class="filter-checkbox" data-filter-type="change_type" value="to_attribute">
+                            <span>To Attribute</span>
+                        </label>
+                    </div>
+                </details>
+
+                {# File Pattern Filter #}
+                <details class="filter-section">
+                    <summary>
+                        <span class="filter-section-title">File Pattern</span>
+                    </summary>
+                    <div class="filter-options">
+                        <input type="text" id="file-pattern" class="filter-text-input" placeholder="e.g., *.php, src/*">
+                        <button class="button small" onclick="applyFilePattern()">Apply</button>
+                    </div>
+                </details>
+            </div>
+
+            <div class="filter-sidebar-footer">
+                <button class="button button-primary" onclick="applyFilters()">Apply Filters</button>
+                <button class="button" onclick="clearAllFilters()">Clear All</button>
+            </div>
+        </aside>

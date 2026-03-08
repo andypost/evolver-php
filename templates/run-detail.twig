@@ -88,58 +88,28 @@
         <div class="panel-head">
             <h2>Scan Results</h2>
             <div class="panel-actions">
-                <button class="button small" onclick="toggleView('flat')">Flat View</button>
-                <button class="button small" onclick="toggleView('extension')">By Extension</button>
-                <button class="button small" onclick="toggleView('category')">By Category</button>
+                <button class="button small" onclick="toggleFilterSidebar()">
+                    <span id="filter-toggle-icon">☰</span> Filters
+                    <span id="active-filter-count" class="filter-count-badge" style="display: none;">0</span>
+                </button>
+                <div class="view-buttons">
+                    <button class="button small" onclick="toggleView('flat')">Flat</button>
+                    <button class="button small" onclick="toggleView('extension')">By Extension</button>
+                    <button class="button small" onclick="toggleView('category')">By Category</button>
+                </div>
             </div>
         </div>
+
+        {% include 'fragments/filter-sidebar.twig' %}
+
+        {% include 'fragments/active-filters.twig' %}
 
         {# Flat View #}
         <div id="view-flat" class="match-view">
             {% if matches %}
                 <div class="match-list">
                     {% for match in matches %}
-                        <div class="match-item severity-{{ match.severity }}">
-                            <div class="match-header">
-                                <span class="match-file"><code>{{ match.file_path }}:{{ match.line_start }}</code></span>
-                                <span class="status-tag status-{{ match.severity }}">{{ match.severity }}</span>
-                                {% if match.fix_method == 'template' %}
-                                    <span class="pill success">Auto-fix available</span>
-                                {% endif %}
-                            </div>
-
-                            <div class="match-body">
-                                <h3>{{ match.old_fqn }} <span class="muted small">{{ match.change_type|replace({'_': ' '}) }}</span></h3>
-
-                                {% if match.migration_hint %}
-                                    <div class="migration-advice">
-                                        <strong>Recommendation:</strong> {{ match.migration_hint|nl2br }}
-                                    </div>
-                                {% endif %}
-
-                                {% if match.diff_json %}
-                                    {% set diff = match.diff_json|json_decode %}
-                                    <div class="match-details">
-                                        {% if match.change_type == 'signature_changed' or match.change_type == 'inheritance_impact' %}
-                                            <p class="small">Method signature shifted:</p>
-                                            <div class="diff-block">
-                                                {% for c in diff.changes %}
-                                                    <div class="diff-line">
-                                                        {% if c.type == 'parameter_added' %}
-                                                            <span class="diff-plus">+ arg {{ c.position }}: {{ c.param.name }}{{ c.param.type ? ' (' ~ c.param.type ~ ')' }}</span>
-                                                        {% elseif c.type == 'parameter_removed' %}
-                                                            <span class="diff-minus">- arg {{ c.position }}: {{ c.param.name }}</span>
-                                                        {% elseif c.type == 'parameter_type_changed' %}
-                                                            <span class="diff-change">Δ arg {{ c.position }}: {{ c.old_type }} → {{ c.new_type }}</span>
-                                                        {% endif %}
-                                                    </div>
-                                                {% endfor %}
-                                            </div>
-                                        {% endif %}
-                                    </div>
-                                {% endif %}
-                            </div>
-                        </div>
+                        {% include 'fragments/match-item.twig' with {'match': match} %}
                     {% endfor %}
                 </div>
             {% else %}
@@ -151,10 +121,13 @@
         <div id="view-extension" class="match-view" style="display: none;">
             {% if by_extension is not empty %}
                 {% for extension, data in by_extension %}
+                    {% set extension_url = '/runs/' ~ run.id ~ '/extensions/' ~ extension|url_encode %}
                     <details class="panel" open>
                         <summary class="panel-head">
                             <h3>
-                                <code>{{ extension }}</code>
+                                <a href="{{ extension_url }}" class="extension-link">
+                                    <code>{{ extension }}</code>
+                                </a>
                                 <span class="pill">{{ data.count }} findings</span>
                                 {% for severity, count in data.by_severity %}
                                     <span class="status-tag status-{{ severity }} severity-small">{{ severity }}: {{ count }}</span>
@@ -163,23 +136,7 @@
                         </summary>
                         <div class="match-list">
                             {% for match in data.matches %}
-                                <div class="match-item severity-{{ match.severity }}">
-                                    <div class="match-header">
-                                        <span class="match-file"><code>{{ match.file_path }}:{{ match.line_start }}</code></span>
-                                        <span class="status-tag status-{{ match.severity }}">{{ match.severity }}</span>
-                                        {% if match.fix_method == 'template' %}
-                                            <span class="pill success">Auto-fix available</span>
-                                        {% endif %}
-                                    </div>
-                                    <div class="match-body">
-                                        <h3>{{ match.old_fqn }} <span class="muted small">{{ match.change_type|replace({'_': ' '}) }}</span></h3>
-                                        {% if match.migration_hint %}
-                                            <div class="migration-advice">
-                                                <strong>Recommendation:</strong> {{ match.migration_hint|nl2br }}
-                                            </div>
-                                        {% endif %}
-                                    </div>
-                                </div>
+                                {% include 'fragments/match-item.twig' with {'match': match} %}
                             {% endfor %}
                         </div>
                     </details>
@@ -202,23 +159,7 @@
                         </summary>
                         <div class="match-list">
                             {% for match in data.matches %}
-                                <div class="match-item severity-{{ match.severity }}">
-                                    <div class="match-header">
-                                        <span class="match-file"><code>{{ match.file_path }}:{{ match.line_start }}</code></span>
-                                        <span class="status-tag status-{{ match.severity }}">{{ match.severity }}</span>
-                                        {% if match.fix_method == 'template' %}
-                                            <span class="pill success">Auto-fix available</span>
-                                        {% endif %}
-                                    </div>
-                                    <div class="match-body">
-                                        <h3>{{ match.old_fqn }} <span class="muted small">{{ match.change_type|replace({'_': ' '}) }}</span></h3>
-                                        {% if match.migration_hint %}
-                                            <div class="migration-advice">
-                                                <strong>Recommendation:</strong> {{ match.migration_hint|nl2br }}
-                                            </div>
-                                        {% endif %}
-                                    </div>
-                                </div>
+                                {% include 'fragments/match-item.twig' with {'match': match} %}
                             {% endfor %}
                         </div>
                     </details>
@@ -229,10 +170,5 @@
         </div>
     </section>
 
-    <script>
-    function toggleView(view) {
-        document.querySelectorAll('.match-view').forEach(el => el.style.display = 'none');
-        document.getElementById('view-' + view).style.display = 'block';
-    }
-    </script>
+    <script src="/assets/matches.js"></script>
 {% endblock %}

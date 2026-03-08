@@ -34,8 +34,12 @@ class QueryGenerator
             return $this->stringReference($name);
         }
 
-        if (in_array($changeType, ['library_removed', 'library_changed'], true)) {
-            return $this->stringReference($name);
+        if (in_array($changeType, ['library_removed', 'library_changed', 'library_css_removed', 'library_js_removed', 'library_dependency_removed', 'library_deprecated'], true)) {
+            return $this->libraryReference($name);
+        }
+
+        if ($changeType === 'hook_to_attribute') {
+            return $this->proceduralHookReference($name);
         }
 
         if ($changeType === 'event_removed') {
@@ -205,6 +209,7 @@ class QueryGenerator
             'method' => $this->methodCall($name),
             'class', 'interface', 'trait', 'constant' => $this->classReference($symbol, $name),
             'service' => $this->serviceReference($name),
+            'drupal_library', 'library_usage' => $this->libraryReference($name),
             'route', 'permission', 'config_schema', 'library',
             'module_info', 'theme_info', 'profile_info', 'theme_engine_info',
             'link_menu', 'link_task', 'link_action', 'link_contextual',
@@ -281,6 +286,30 @@ class QueryGenerator
     {
         $literal = $this->escapeLiteral($name);
         return "(member_access_expression name: (name) @prop (#eq? @prop \"{$literal}\"))";
+    }
+
+    /**
+     * Match library references in attach_library() calls and #attached arrays.
+     * Library names follow the pattern 'module/library_name'.
+     */
+    private function libraryReference(string $name): string
+    {
+        $literal = $this->escapeLiteral($name);
+        return "(string_content) @lib (#eq? @lib \"{$literal}\")";
+    }
+
+    /**
+     * Match procedural hook function definitions (e.g. mymodule_form_alter).
+     * Used for hook→attribute modernization suggestions.
+     */
+    private function proceduralHookReference(string $name): string
+    {
+        // Match function calls to the hook name (core invoking it)
+        // and function definitions implementing it
+        $literal = $this->escapeLiteral($name);
+        $regex = ".*_{$literal}$";
+        $regexLiteral = $this->escapeLiteral($regex);
+        return "(function_definition name: (name) @fn (#match? @fn \"{$regexLiteral}\"))";
     }
 
     private function escapeLiteral(string $value): string

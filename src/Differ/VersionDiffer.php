@@ -20,8 +20,10 @@ class VersionDiffer
         private YAMLDiffer $yamlDiffer,
         private FixTemplateGenerator $fixTemplateGenerator,
         private QueryGenerator $queryGenerator,
+        private ?LibraryDiffer $libraryDiffer = null,
     ) {
         $this->workerCount = $this->detectCpuCount();
+        $this->libraryDiffer ??= new LibraryDiffer($api);
     }
 
     public function setWorkerCount(int $count): void
@@ -321,6 +323,24 @@ class VersionDiffer
             $changes[] = $dep;
         }
 
+        // 4. Library diffing
+        $output?->write("Diffing libraries... ");
+        $libChanges = $this->libraryDiffer->diffLibraries($fromId, $toId);
+        foreach ($libChanges as $libChange) {
+            $libChange['ts_query'] = $this->queryGenerator->generate(
+                $libChange['change_type'],
+                ['symbol_type' => 'drupal_library', 'fqn' => $libChange['old_fqn'] ?? $libChange['new_fqn'] ?? '', 'name' => $libChange['old_fqn'] ?? $libChange['new_fqn'] ?? '']
+            );
+            $changes[] = $libChange;
+        }
+        $output?->writeln(sprintf("<comment>%d library changes</comment>", count($libChanges)));
+
+        // 5. Hook modernization detection
+        $output?->write("Detecting hook modernization opportunities... ");
+        $hookChanges = $this->detectHookModernization($fromId, $toId);
+        array_push($changes, ...$hookChanges);
+        $output?->writeln(sprintf("<comment>%d hook suggestions</comment>", count($hookChanges)));
+
         // Store all changes
         $output?->write("Storing changes... ");
         $storedChanges = $this->api->db()->transaction(function () use ($changes): int {
@@ -464,6 +484,69 @@ class VersionDiffer
         }
 
         return $allMatches;
+    }
+
+    /**
+     * Detect procedural hooks that could be migrated to #[Hook] attributes.
+     *
+     * Finds procedural hook implementations in the "from" version that have
+     * corresponding #[Hook] attribute implementations in the "to" version,
+     * indicating the hook system supports attribute-based registration.
+     *
+     * @return list<array<string, mixed>>
+     */
+    private function detectHookModernization(int $fromId, int $toId): array
+    {
+        $changes = [];
+
+        // Get all hook symbols from both versions
+        $fromHooks = $this->api->symbols()->findByTypeAndVersion($fromId, 'hook');
+        $toHooks = $this->api->symbols()->findByTypeAndVersion($toId, 'hook');
+
+        // Build sets of hook names by implementation style
+        $fromProcedural = [];
+        $toAttributeBased = [];
+
+        foreach ($fromHooks as $hook) {
+            $namespace = $hook['namespace'] ?? null;
+            // Procedural hooks have no namespace (they're in .module files)
+            if ($namespace === null || $namespace === '') {
+                $fromProcedural[$hook['fqn']] = $hook;
+            }
+        }
+
+        foreach ($toHooks as $hook) {
+            $namespace = $hook['namespace'] ?? null;
+            // Attribute-based hooks have a namespace (they're in classes)
+            if ($namespace !== null && $namespace !== '') {
+                $toAttributeBased[$hook['fqn']] = true;
+            }
+        }
+
+        // For each procedural hook that now also has an attribute-based version,
+        // generate a modernization suggestion
+        foreach ($fromProcedural as $hookName => $hook) {
+            if (isset($toAttributeBased[$hookName])) {
+                $changes[] = [
+                    'from_version_id' => $fromId,
+                    'to_version_id' => $toId,
+                    'language' => 'php',
+                    'change_type' => 'hook_to_attribute',
+                    'severity' => 'modernization',
+                    'old_symbol_id' => $hook['id'],
+                    'old_fqn' => $hookName,
+                    'new_fqn' => $hookName,
+                    'confidence' => 0.9,
+                    'migration_hint' => "Hook '{$hookName}' can be converted from procedural implementation to #[Hook('{$hookName}')] attribute on a class method. This improves discoverability and follows modern Drupal conventions.",
+                    'ts_query' => $this->queryGenerator->generate('hook_to_attribute', ['symbol_type' => 'function', 'fqn' => $hookName, 'name' => $hookName]),
+                ];
+            }
+        }
+
+        // Also flag procedural hooks that were removed in the target version
+        // (already handled by the main removal detection, but we add a more specific hint)
+
+        return $changes;
     }
 
     private function symbolId(array $symbol): ?int
