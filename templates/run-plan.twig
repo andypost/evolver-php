@@ -1,0 +1,106 @@
+{% extends "layout.twig" %}
+
+{% block content %}
+    <section class="hero hero-compact">
+        <div>
+            <p class="eyebrow">Upgrade Plan</p>
+            <h1>{{ project.name }}</h1>
+            <p class="muted">
+                Scan Run #{{ run.id }} &bull; {{ run.from_core_version }} &rarr; {{ run.target_core_version }}
+            </p>
+        </div>
+        <div class="actions">
+            <a href="/runs/{{ run.id }}" class="button">Back to Results</a>
+        </div>
+    </section>
+
+    <div class="stats-grid" style="margin-bottom: 2rem;">
+        <div class="stat-card">
+            <div class="stat-label">Total Custom Extensions</div>
+            <div class="stat-value">{{ plan|length }}</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">Breaking Issues</div>
+            <div class="stat-value">{{ summary.by_severity['breaking'] ?? 0 }}</div>
+        </div>
+    </div>
+
+    <section class="panel">
+        <div class="panel-head">
+            <h2>Recommended Upgrade Path</h2>
+            <p class="muted small">Extensions are sorted topologically. Start at the top to resolve base dependencies first.</p>
+        </div>
+
+        {% if plan %}
+            <div class="table-responsive">
+                <table class="table">
+                    <thead>
+                        <tr>
+                            <th width="50">#</th>
+                            <th>Extension</th>
+                            <th>Dependencies</th>
+                            <th>Dependents</th>
+                            <th style="text-align: right">Issues</th>
+                            <th style="text-align: right">Action</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for index, item in plan %}
+                            <tr>
+                                <td class="muted">{{ index + 1 }}</td>
+                                <td>
+                                    <strong>{{ item.label }}</strong><br>
+                                    <span class="muted small"><code>{{ item.machine_name }}</code> ({{ item.type }})</span>
+                                </td>
+                                <td>
+                                    {% if item.dependencies %}
+                                        <div class="pill-list">
+                                            {% for dep in item.dependencies %}
+                                                <span class="pill type-generic">{{ dep }}</span>
+                                            {% endfor %}
+                                        </div>
+                                    {% else %}
+                                        <span class="muted small">None</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    {% if item.dependents %}
+                                        <span class="muted small">{{ item.dependents|length }} downstream</span>
+                                    {% else %}
+                                        <span class="muted small">0</span>
+                                    {% endif %}
+                                </td>
+                                <td style="text-align: right">
+                                    {% if item.match_count == 0 %}
+                                        <span class="pill success">Clean</span>
+                                    {% else %}
+                                        <div style="display: flex; gap: 0.5rem; justify-content: flex-end;">
+                                            {% if item.by_severity.breaking ?? 0 %}
+                                                <span class="pill status-breaking">{{ item.by_severity.breaking }} break</span>
+                                            {% endif %}
+                                            {% if item.by_severity.warning ?? 0 %}
+                                                <span class="pill status-warning">{{ item.by_severity.warning }} warn</span>
+                                            {% endif %}
+                                            {% if item.by_severity.deprecation ?? 0 %}
+                                                <span class="pill status-deprecation">{{ item.by_severity.deprecation }} dep</span>
+                                            {% endif %}
+                                        </div>
+                                    {% endif %}
+                                </td>
+                                <td style="text-align: right">
+                                    {% if item.match_count > 0 %}
+                                        <a href="/runs/{{ run.id }}/extensions/{{ item.path|url_encode }}" class="button small">Review</a>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        {% else %}
+            <div class="panel-body">
+                <p class="empty">No custom extensions found in this project.</p>
+            </div>
+        {% endif %}
+    </section>
+{% endblock %}

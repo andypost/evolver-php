@@ -74,6 +74,7 @@ final class WebServer
         $router->addRoute('POST', '/projects/{id}/runs', new ClosureRequestHandler($this->handleQueueRun(...)));
         $router->addRoute('GET', '/projects/{id}/compare', new ClosureRequestHandler($this->handleCompareRuns(...)));
         $router->addRoute('GET', '/runs/{id}', new ClosureRequestHandler($this->handleRunDetail(...)));
+        $router->addRoute('GET', '/runs/{id}/plan', new ClosureRequestHandler($this->handleRunPlan(...)));
         $router->addRoute('GET', '/runs/{runId}/extensions/{extensionPath}', new ClosureRequestHandler($this->handleExtensionDetail(...)));
         $router->addRoute('GET', '/matches/{id}/preview', new ClosureRequestHandler($this->handleMatchPreview(...)));
         $router->addRoute('GET', '/jobs', new ClosureRequestHandler($this->handleJobs(...)));
@@ -455,6 +456,29 @@ final class WebServer
             'by_extension' => $byExtension,
             'by_category' => $byCategory,
             'logs' => $logs,
+        ]);
+    }
+
+    public function handleRunPlan(Request $request): Response
+    {
+        $runId = $this->routeId($request);
+        $run = $this->api->scanRuns()->findById($runId);
+        if ($run === null) {
+            return $this->text('Scan run not found.', HttpStatus::NOT_FOUND);
+        }
+
+        $project = $this->api->projects()->findById((int) $run['project_id']);
+        if ($project === null) {
+            return $this->text('Project not found.', HttpStatus::NOT_FOUND);
+        }
+
+        $plan = $this->api->getProjectUpgradePlan($runId, (int) $project['id']);
+        
+        return $this->html('run-plan.twig', [
+            'project' => $project,
+            'run' => $run,
+            'summary' => $this->api->summarizeScanRun($runId),
+            'plan' => $plan,
         ]);
     }
 

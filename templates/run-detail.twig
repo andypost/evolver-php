@@ -7,7 +7,10 @@
             <h1>#{{ run.id }} for {{ project.name }}</h1>
             <p class="muted">{{ run.branch_name }} · Core upgrade path {{ run.from_core_version ?: 'auto-detected' }} → {{ run.target_core_version }}</p>
         </div>
-        <a class="button" href="/projects/{{ project.id }}">Back to project</a>
+        <div class="actions">
+            <a class="button" href="/runs/{{ run.id }}/plan">Upgrade Plan</a>
+            <a class="button" href="/projects/{{ project.id }}">Back to project</a>
+        </div>
     </section>
 
     <section class="grid two-up">

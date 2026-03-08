@@ -137,8 +137,8 @@ Top priority: custom modules, custom themes, custom profiles, and site-level app
 
 ### UI Testing Strategy
 
-All UI tests live in `tests/Unit/Web/WebServerTemplateTest.php`. Tests render Twig templates
-directly with mock data — no HTTP server or browser required.
+UI tests live under `tests/Unit/Web/` and share `UiTestCase.php`. Tests render Twig
+templates directly with mock data — no HTTP server or browser required.
 
 #### What we test
 - **Render smoke tests** — every template renders without Twig errors given realistic context arrays
@@ -154,16 +154,18 @@ directly with mock data — no HTTP server or browser required.
 - **WebServer handler wiring** — Route registration and request→response flow. Covered implicitly by integration tests in Docker.
 
 #### Adding a new template test
-1. Add a `testNewTemplateRenders()` method that calls `$this->twig->render()` with realistic mock data
-2. Assert key DOM elements are present (`assertStringContainsString`)
-3. For templates using fragments, verify fragment-specific selectors (e.g., `id="filter-sidebar"`)
-4. Add a balanced tags check if the template has non-trivial nesting
-5. For new change types, add a `testMatchItemRendersNewType()` via `renderMatchItem(['change_type' => '...'])`
+1. Add a test to the appropriate file (`PageRenderTest.php`, `ResultsPageRenderTest.php`, `FragmentRenderTest.php`, or `MatchItemRenderTest.php`)
+2. Call `renderTemplate()` or a shared helper with realistic mock data
+3. Assert key DOM elements are present (`assertStringContainsString`)
+4. For templates using fragments, verify fragment-specific selectors (e.g., `id="filter-sidebar"`)
+5. Add a balanced tags check if the template has non-trivial nesting
+6. For new change types, add a `testMatchItemRendersNewType()` via `renderMatchItem(['change_type' => '...'])`
 
 #### Convention
-- Mock data helpers (`makeMatch()`, `makeRun()`, `makeSummary()`) keep test data DRY
-- Tests are grouped by template with comment headers (`// -- Dashboard ---`)
-- Render helpers (`renderRunDetail()`, `renderExtensionDetail()`, `renderMatchItem()`) encapsulate template+context pairs
+- Shared Twig/bootstrap and mock data helpers live in `UiTestCase.php`
+- Page composition tests live in `PageRenderTest.php` and `ResultsPageRenderTest.php`
+- Fragment contract tests live in `FragmentRenderTest.php`
+- Change-type render coverage lives in `MatchItemRenderTest.php`
 
 ## Phase 2 - Drupal App Analysis Depth
 

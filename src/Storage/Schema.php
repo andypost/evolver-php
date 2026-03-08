@@ -35,7 +35,7 @@ final class Schema
 
         $this->db->pdo()->exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_project_path ON projects(path)');
         $_ = $this->db->execute(
-            "INSERT OR REPLACE INTO schema_meta (key, value) VALUES ('schema_version', '5')"
+            "INSERT OR REPLACE INTO schema_meta (key, value) VALUES ('schema_version', '6')"
         );
     }
 
@@ -167,6 +167,17 @@ final class Schema
                 default_branch TEXT,
                 core_version   TEXT,
                 last_scanned   TEXT
+            )',
+
+            'CREATE TABLE IF NOT EXISTS project_extensions (
+                id              INTEGER PRIMARY KEY,
+                project_id      INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                machine_name    TEXT NOT NULL,
+                extension_type  TEXT NOT NULL,
+                label           TEXT,
+                dependencies    TEXT,
+                file_path       TEXT,
+                UNIQUE(project_id, machine_name)
             )',
 
             'CREATE TABLE IF NOT EXISTS project_branches (

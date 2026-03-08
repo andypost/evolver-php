@@ -162,6 +162,8 @@ final class ProjectScanner
             $this->api->scanRuns()->markRunning($scanRunId, null, $path, $fromVersion, count($files));
         }
 
+        $this->extractProjectExtensions($projectId, $files, $output);
+
         $changesByLanguage = [];
         foreach ($changes as $change) {
             $language = $change['language'] ?? null;
@@ -610,5 +612,56 @@ final class ProjectScanner
     private function effectiveWorkerCount(): int
     {
         return $this->canRunParallel() ? $this->workerCount : 1;
+    }
+
+    private function extractProjectExtensions(int $projectId, array $files, ?OutputInterface $output): void
+    {
+        $output?->writeln('Extracting project extensions...');
+        $this->api->projectExtensions()->deleteAllForProject($projectId);
+
+        $extractor = new \DrupalEvolver\Indexer\Extractor\DrupalYamlSemanticExtractor();
+
+        foreach ($files as $file) {
+            $filePath = $file['path'];
+            $relativePath = $file['relative_path'];
+
+            if (str_ends_with($relativePath, '.info.yml') || basename($relativePath) === 'recipe.yml') {
+                $source = file_get_contents($filePath);
+                if ($source === false) continue;
+
+                $symbols = $extractor->extract($source, $filePath);
+                if ($symbols === null || empty($symbols)) continue;
+
+                $symbol = $symbols[0]; // The main symbol
+                $metadata = json_decode((string) ($symbol['metadata_json'] ?? '{}'), true);
+
+                $machineName = $symbol['fqn'];
+                $type = $metadata['file_kind'] ?? 'module';
+                
+                // map 'module_info' to 'module'
+                if (str_ends_with($type, '_info')) {
+                    $type = str_replace('_info', '', $type);
+                } elseif ($type === 'recipe_manifest') {
+                    $type = 'recipe';
+                }
+
+                $label = $metadata['label'] ?? null;
+                $dependencies = [];
+                if ($type === 'recipe') {
+                    $dependencies = array_merge($metadata['install'] ?? [], $metadata['recipes'] ?? []);
+                } else {
+                    $dependencies = $metadata['dependency_targets'] ?? [];
+                }
+
+                $this->api->projectExtensions()->save(
+                    $projectId,
+                    $machineName,
+                    $type,
+                    $label,
+                    $dependencies,
+                    $relativePath
+                );
+            }
+        }
     }
 }

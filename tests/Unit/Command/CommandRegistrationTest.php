@@ -25,6 +25,7 @@ class CommandRegistrationTest extends TestCase
         $this->assertTrue($this->app->has('scan'));
         $this->assertTrue($this->app->has('apply'));
         $this->assertTrue($this->app->has('report'));
+        $this->assertTrue($this->app->has('report:plan'));
         $this->assertTrue($this->app->has('status'));
         $this->assertTrue($this->app->has('query'));
         $this->assertTrue($this->app->has('compare'));
@@ -96,6 +97,16 @@ class CommandRegistrationTest extends TestCase
     public function testReportCommandRequiresProject(): void
     {
         $command = $this->app->find('report');
+        $tester = new CommandTester($command);
+        $tester->execute(['--db' => ':memory:']);
+
+        $this->assertSame(1, $tester->getStatusCode());
+        $this->assertStringContainsString('Either --project or --run is required', $tester->getDisplay());
+    }
+
+    public function testPlanCommandRequiresProject(): void
+    {
+        $command = $this->app->find('report:plan');
         $tester = new CommandTester($command);
         $tester->execute(['--db' => ':memory:']);
 

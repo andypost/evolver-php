@@ -161,6 +161,23 @@ Stores scanned target projects.
 
 **Unique index:** `path`
 
+### project_extensions
+
+Stores the custom extensions discovered inside a scanned project so upgrade plans and
+project-level dependency graphs can work against the target app, not just indexed core versions.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| id | INTEGER PK | Auto-increment |
+| project_id | INTEGER FK | → projects(id) CASCADE |
+| machine_name | TEXT | Extension machine name |
+| extension_type | TEXT | "module", "theme", "profile", "recipe" |
+| label | TEXT | Human-readable label from metadata |
+| dependencies | TEXT | JSON list of declared internal/external dependencies |
+| file_path | TEXT | Relative path to the extension manifest |
+
+**Unique constraint:** `(project_id, machine_name)`
+
 ### code_matches
 
 Stores matches found when scanning target projects.
@@ -198,9 +215,9 @@ Stores metadata about the database itself.
 | key | TEXT PK | Metadata key |
 | value | TEXT | Metadata value |
 
-Currently stores: `schema_version` = `"2"`
+Currently stores: `schema_version` = `"6"`
 
-Schema version 2 also forward-migrates older databases by backfilling `versions.weight`, normalizing `NULL` match offsets to `-1`, deduplicating legacy match rows, and deduplicating projects by path before adding the unique index.
+Schema version 6 forward-migrates older databases by backfilling `versions.weight`, normalizing `NULL` match offsets to `-1`, deduplicating legacy match rows, deduplicating projects by path before adding the unique index, and creating project-scoped tables used for managed-project scans and upgrade planning.
 
 ## Upgrade Path Query
 

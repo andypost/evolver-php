@@ -11,6 +11,7 @@ use DrupalEvolver\Storage\Repository\JobLogRepo;
 use DrupalEvolver\Storage\Repository\JobRepo;
 use DrupalEvolver\Storage\Repository\MatchRepo;
 use DrupalEvolver\Storage\Repository\ProjectBranchRepo;
+use DrupalEvolver\Storage\Repository\ProjectExtensionRepo;
 use DrupalEvolver\Storage\Repository\ProjectRepo;
 use DrupalEvolver\Storage\Repository\ScanRunRepo;
 use DrupalEvolver\Storage\Repository\SymbolRelationRepo;
@@ -39,6 +40,7 @@ class DatabaseApi
     private ?ChangeRepo $changeRepo = null;
     private ?ProjectRepo $projectRepo = null;
     private ?ProjectBranchRepo $projectBranchRepo = null;
+    private ?ProjectExtensionRepo $projectExtensionRepo = null;
     private ?ScanRunRepo $scanRunRepo = null;
     private ?JobRepo $jobRepo = null;
     private ?JobLogRepo $jobLogRepo = null;
@@ -116,6 +118,12 @@ class DatabaseApi
     public function projectBranches(): ProjectBranchRepo
     {
         return $this->projectBranchRepo ??= new ProjectBranchRepo($this->database);
+    }
+
+    #[\NoDiscard]
+    public function projectExtensions(): ProjectExtensionRepo
+    {
+        return $this->projectExtensionRepo ??= new ProjectExtensionRepo($this->database);
     }
 
     #[\NoDiscard]
@@ -743,6 +751,127 @@ class DatabaseApi
         return $graph;
     }
 
+    /**
+     * Build an upgrade plan for a custom project based on internal extension dependencies.
+     * Orders extensions topologically (independent modules first) to provide a clear upgrade path.
+     *
+     * @return list<array>
+     */
+    #[\NoDiscard]
+    public function getProjectUpgradePlan(int $scanRunId, int $projectId): array
+    {
+        $extensions = $this->projectExtensions()->findByProject($projectId);
+        $matchesGrouped = $this->getMatchesGroupedByExtension($scanRunId);
+
+        $plan = [];
+        $dependencyMap = [];
+
+        // Build base map
+        foreach ($extensions as $ext) {
+            $machineName = $ext['machine_name'];
+            $deps = json_decode((string) $ext['dependencies'], true) ?: [];
+            
+            // Filter dependencies to only those that are in this project
+            // to build an internal graph
+            $internalDeps = [];
+            foreach ($deps as $dep) {
+                foreach ($extensions as $otherExt) {
+                    if ($otherExt['machine_name'] === $dep) {
+                        $internalDeps[] = $dep;
+                        break;
+                    }
+                }
+            }
+
+            // Find matching path group (e.g. modules/custom/my_module)
+            $extMatches = null;
+            $extPath = null;
+            foreach ($matchesGrouped as $path => $data) {
+                if (basename($path) === $machineName) {
+                    $extMatches = $data;
+                    $extPath = $path;
+                    break;
+                }
+            }
+
+            $plan[$machineName] = [
+                'machine_name' => $machineName,
+                'label' => $ext['label'] ?? $machineName,
+                'type' => $ext['extension_type'],
+                'path' => $extPath ?? $ext['file_path'],
+                'dependencies' => $internalDeps,
+                'match_count' => $extMatches ? $extMatches['count'] : 0,
+                'by_severity' => $extMatches ? $extMatches['by_severity'] : [],
+                'matches' => $extMatches ? $extMatches['matches'] : [],
+                'dependents' => [],
+                'score' => 0,
+            ];
+            
+            $dependencyMap[$machineName] = $internalDeps;
+        }
+
+        // Calculate dependents
+        foreach ($dependencyMap as $name => $deps) {
+            foreach ($deps as $dep) {
+                if (isset($plan[$dep])) {
+                    $plan[$dep]['dependents'][] = $name;
+                }
+            }
+        }
+
+        // Calculate scores
+        foreach ($plan as &$item) {
+            $score = 0;
+            foreach ($item['by_severity'] as $sev => $cnt) {
+                if ($sev === 'breaking') $score += ($cnt * 10);
+                elseif ($sev === 'warning' || $sev === 'deprecation') $score += ($cnt * 3);
+                else $score += $cnt;
+            }
+            $item['score'] = $score;
+        }
+        unset($item);
+
+        // Kahn's Algorithm for Topological Sort
+        $sorted = [];
+        $visited = [];
+        $tempMark = [];
+        $hasCycle = false;
+
+        $visit = function($n) use (&$visit, &$sorted, &$visited, &$tempMark, &$hasCycle, $plan) {
+            if (isset($tempMark[$n])) {
+                $hasCycle = true;
+                return;
+            }
+            if (!isset($visited[$n])) {
+                $tempMark[$n] = true;
+                foreach ($plan[$n]['dependencies'] as $m) {
+                    $visit($m);
+                }
+                unset($tempMark[$n]);
+                $visited[$n] = true;
+                $sorted[] = $n;
+            }
+        };
+
+        foreach (array_keys($plan) as $node) {
+            if (!isset($visited[$node])) {
+                $visit($node);
+            }
+        }
+
+        if ($hasCycle) {
+            usort($plan, fn($a, $b) => count($a['dependencies']) <=> count($b['dependencies']));
+            return array_values($plan);
+        }
+
+        $finalPlan = [];
+        foreach ($sorted as $node) {
+            $finalPlan[] = $plan[$node];
+        }
+
+        return $finalPlan;
+    }
+
     public function summarizeScanRun(int $scanRunId): array
     {
         $rows = $this->database->query(
@@ -811,9 +940,11 @@ class DatabaseApi
     public function getMatchesGroupedByExtension(int $scanRunId): array
     {
         $matches = $this->database->query(
-            "SELECT cm.*, c.severity, c.change_type
+            "SELECT cm.*, 
+                    COALESCE(cm.severity, c.severity) as severity, 
+                    COALESCE(cm.change_type, c.change_type) as change_type
              FROM code_matches cm
-             JOIN changes c ON cm.change_id = c.id
+             LEFT JOIN changes c ON cm.change_id = c.id
              WHERE cm.scan_run_id = :scan_run_id
              ORDER BY cm.file_path",
             ['scan_run_id' => $scanRunId]
@@ -865,11 +996,13 @@ class DatabaseApi
     public function getMatchesGroupedByCategory(int $scanRunId): array
     {
         $matches = $this->database->query(
-            "SELECT cm.*, c.severity, c.change_type
+            "SELECT cm.*, 
+                    COALESCE(cm.severity, c.severity) as severity, 
+                    COALESCE(cm.change_type, c.change_type) as change_type
              FROM code_matches cm
-             JOIN changes c ON cm.change_id = c.id
+             LEFT JOIN changes c ON cm.change_id = c.id
              WHERE cm.scan_run_id = :scan_run_id
-             ORDER BY c.severity, cm.file_path",
+             ORDER BY COALESCE(cm.severity, c.severity), cm.file_path",
             ['scan_run_id' => $scanRunId]
         )->fetchAll();
 

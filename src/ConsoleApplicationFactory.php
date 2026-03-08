@@ -9,6 +9,7 @@ use DrupalEvolver\Command\CompareCommand;
 use DrupalEvolver\Command\DiffCommand;
 use DrupalEvolver\Command\ImportCommand;
 use DrupalEvolver\Command\IndexCommand;
+use DrupalEvolver\Command\PlanCommand;
 use DrupalEvolver\Command\QueueWorkCommand;
 use DrupalEvolver\Command\QueryCommand;
 use DrupalEvolver\Command\ReportCommand;
@@ -31,6 +32,7 @@ final class ConsoleApplicationFactory
             new ScanCommand(),
             new ApplyCommand(),
             new ReportCommand(),
+            new PlanCommand(),
             new StatusCommand(),
             new QueryCommand(),
             new CompareCommand(),
