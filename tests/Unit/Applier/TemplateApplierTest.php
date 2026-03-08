@@ -379,4 +379,80 @@ class TemplateApplierTest extends TestCase
         @unlink($filePath);
         @rmdir($tmpDir);
     }
+
+    public function testApplySupportsPharboristAnnotationToAttributeTransforms(): void
+    {
+        $api = $this->createTestApi();
+
+        $tmpDir = sys_get_temp_dir() . '/evolver-applier-pharborist-' . uniqid('', true);
+        mkdir($tmpDir, 0777, true);
+        $filePath = $tmpDir . '/DemoBlock.php';
+        $source = <<<'PHP'
+<?php
+
+namespace Drupal\demo\Plugin\Block;
+
+use Drupal\Core\Block\BlockBase;
+
+/**
+ * @Block(
+ *   id = "demo_block"
+ * )
+ */
+class DemoBlock extends BlockBase {}
+PHP;
+        file_put_contents($filePath, $source);
+
+        $fromId = $api->versions()->create('10.2.0', 10, 2, 0);
+        $toId = $api->versions()->create('10.3.0', 10, 3, 0);
+
+        $changeId = $api->changes()->create([
+            'from_version_id' => $fromId,
+            'to_version_id' => $toId,
+            'language' => 'php',
+            'change_type' => 'plugin_annotation_to_attribute',
+            'old_fqn' => 'demo_block',
+            'fix_template' => json_encode([
+                'action' => 'annotation_to_attribute',
+                'annotation' => 'Block',
+                'attribute' => 'Block',
+                'attribute_import' => 'Drupal\\Core\\Block\\Attribute\\Block',
+            ]),
+        ]);
+
+        $projectId = $api->projects()->create('demo-pharborist', $tmpDir, 'module', '10.2.0');
+
+        $matchId = $api->matches()->create([
+            'project_id' => $projectId,
+            'change_id' => $changeId,
+            'file_path' => 'DemoBlock.php',
+            'line_start' => 7,
+            'matched_source' => "@Block(\n *   id = \"demo_block\"\n * )",
+            'fix_method' => 'pharborist',
+        ]);
+        $this->assertGreaterThan(0, $matchId);
+
+        $applier = new TemplateApplier($api);
+        $stats = $applier->applyWithStats($projectId, $tmpDir, null, false, false);
+
+        $this->assertSame(1, $stats['applied']);
+        $this->assertSame(1, $stats['files_changed']);
+        $this->assertSame(0, $stats['failed']);
+
+        $updated = file_get_contents($filePath);
+        $this->assertIsString($updated);
+        $this->assertStringContainsString("use Drupal\\Core\\Block\\Attribute\\Block;", $updated);
+        $this->assertStringContainsString('#[Block(id: "demo_block")]', $updated);
+        $this->assertStringNotContainsString('@Block(', $updated);
+
+        $counts = $api->matches()->countByProject($projectId);
+        $indexed = [];
+        foreach ($counts as $row) {
+            $indexed[$row['status']] = (int) $row['cnt'];
+        }
+        $this->assertSame(1, $indexed['applied'] ?? 0);
+
+        @unlink($filePath);
+        @rmdir($tmpDir);
+    }
 }

@@ -1,0 +1,7 @@
+<div>
+    {{ component('my_module:button', { label: 'Click me' }) }}
+    {% include 'my_module:icon' with { name: 'star' } %}
+    {% embed 'my_module:card' %}
+        {% block content %}Embedded content{% endblock %}
+    {% endembed %}
+</div>

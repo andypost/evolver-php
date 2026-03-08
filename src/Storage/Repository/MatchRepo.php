@@ -21,6 +21,7 @@ final class MatchRepo
             'project_id', 'scan_run_id', 'scope_key', 'change_id', 'file_path',
             'line_start', 'line_end', 'byte_start', 'byte_end',
             'matched_source', 'suggested_fix', 'fix_method', 'status',
+            'change_type', 'severity', 'old_fqn', 'migration_hint',
         ];
 
         $data = $this->normalizeIdentityFields($data);
@@ -32,7 +33,7 @@ final class MatchRepo
 
         $assignments = [];
         foreach ($present as $field) {
-            if (in_array($field, self::IDENTITY_FIELDS, true)) {
+            if (in_array($field, self::IDENTITY_FIELDS, true) || $field === 'change_type') {
                 continue;
             }
 
@@ -74,6 +75,7 @@ final class MatchRepo
             'project_id', 'scan_run_id', 'scope_key', 'change_id', 'file_path',
             'line_start', 'line_end', 'byte_start', 'byte_end',
             'matched_source', 'suggested_fix', 'fix_method', 'status',
+            'change_type', 'severity', 'old_fqn', 'migration_hint',
         ];
         $cols = implode(', ', $fields);
         $placeholders = '(' . implode(', ', array_fill(0, count($fields), '?')) . ')';
@@ -86,6 +88,9 @@ final class MatchRepo
             'suggested_fix = excluded.suggested_fix',
             'fix_method = excluded.fix_method',
             'status = excluded.status',
+            'severity = excluded.severity',
+            'old_fqn = excluded.old_fqn',
+            'migration_hint = excluded.migration_hint',
         ];
         $affectedRows = 0;
 
@@ -131,7 +136,16 @@ final class MatchRepo
     public function findByRun(int $scanRunId): array
     {
         return $this->db->query(
-            'SELECT * FROM code_matches WHERE scan_run_id = :scan_run_id ORDER BY file_path, line_start, id',
+            'SELECT m.*, 
+                    COALESCE(m.change_type, c.change_type) as change_type,
+                    COALESCE(m.severity, c.severity) as severity,
+                    COALESCE(m.migration_hint, c.migration_hint) as migration_hint,
+                    COALESCE(m.old_fqn, c.old_fqn) as old_fqn,
+                    c.diff_json, c.new_fqn, c.fix_method
+             FROM code_matches m
+             LEFT JOIN changes c ON m.change_id = c.id
+             WHERE m.scan_run_id = :scan_run_id 
+             ORDER BY m.file_path, m.line_start, m.id',
             ['scan_run_id' => $scanRunId]
         )->fetchAll();
     }
@@ -231,7 +245,7 @@ final class MatchRepo
             'SELECT id
              FROM code_matches
              WHERE scope_key = :scope_key
-               AND change_id = :change_id
+               AND change_id IS :change_id
                AND file_path = :file_path
                AND byte_start = :byte_start
                AND byte_end = :byte_end

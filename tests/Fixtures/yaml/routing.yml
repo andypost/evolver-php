@@ -1,0 +1,12 @@
+my_module.example:
+  path: '/example/{param}'
+  defaults:
+    _controller: 'Drupal\my_module\Controller\ExampleController::build'
+    _title: 'Example Page'
+  requirements:
+    _permission: 'access content'
+  options:
+    parameters:
+      param:
+        type: string
+  methods: [GET, POST]

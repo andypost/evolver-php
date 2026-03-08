@@ -118,8 +118,23 @@ a {
     margin-bottom: 1.5rem;
 }
 
-.two-up {
+.grid.two-up {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.grid.two-up-compact {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 2rem;
+}
+
+.small {
+    font-size: 0.85rem;
+}
+
+.uppercase {
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
 }
 
 .three-up {
@@ -587,4 +602,97 @@ code {
         transform: rotate(90deg);
         text-align: center;
     }
+}
+
+/* Scan Results UI */
+.match-list {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    margin-top: 1rem;
+}
+
+.match-item {
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.4);
+    overflow: hidden;
+    transition: border-color 0.2s ease;
+}
+
+.match-item:hover {
+    border-color: var(--accent);
+    background: rgba(255, 255, 255, 0.7);
+}
+
+.match-header {
+    background: rgba(0, 0, 0, 0.02);
+    padding: 0.75rem 1.25rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    border-bottom: 1px solid var(--line);
+}
+
+.match-file {
+    font-size: 0.85rem;
+    color: var(--muted);
+}
+
+.match-body {
+    padding: 1.25rem;
+}
+
+.match-body h3 {
+    margin: 0 0 0.75rem 0;
+    font-size: 1.1rem;
+    font-family: inherit;
+}
+
+.migration-advice {
+    background: rgba(11, 110, 79, 0.06);
+    border-left: 4px solid var(--accent);
+    padding: 1rem;
+    margin: 1rem 0;
+    font-size: 0.95rem;
+    line-height: 1.6;
+    border-radius: 0 8px 8px 0;
+}
+
+.diff-block {
+    background: #1e1e1e;
+    color: #d4d4d4;
+    padding: 1rem;
+    border-radius: 8px;
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 0.85rem;
+    margin-top: 0.75rem;
+    line-height: 1.5;
+    overflow-x: auto;
+}
+
+.diff-line {
+    white-space: pre;
+}
+
+.diff-plus { color: #4ec9b0; }
+.diff-minus { color: #f44747; }
+.diff-change { color: #ce9178; }
+
+.status-tag.status-breaking { background: #fee2e2; color: #991b1b; }
+.status-tag.status-deprecation { background: #fef9c3; color: #854d0e; }
+.status-tag.status-removal { background: #f3f4f6; color: #1f2937; }
+
+.impact-high {
+    background: rgba(217, 93, 57, 0.04);
+}
+
+.impact-high td {
+    border-left: 4px solid var(--accent-2);
+}
+
+.success {
+    background: #dcfce7 !important;
+    color: #166534 !important;
 }

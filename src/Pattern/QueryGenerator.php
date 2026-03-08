@@ -38,6 +38,14 @@ class QueryGenerator
             return $this->stringReference($name);
         }
 
+        if ($changeType === 'event_removed') {
+            return $this->eventReference($name);
+        }
+
+        if ($changeType === 'inheritance_impact') {
+            return $this->overrideReference($symbol, $name);
+        }
+
         if (in_array($changeType, [
             'module_info_changed',
             'module_dependencies_changed',
@@ -203,8 +211,38 @@ class QueryGenerator
             'breakpoint', 'config_export', 'recipe_manifest', 'sdc_component' => $this->stringReference($name),
             'sdc_include', 'sdc_embed', 'sdc_call', 'sdc_function',
             'twig_include', 'twig_embed', 'twig_extends', 'twig_component' => $this->twigReference($name),
+            'plugin_definition' => $this->classReference($symbol, $name),
+            'event_subscriber' => $this->eventReference($name),
             default => null,
         };
+    }
+
+    private function eventReference(string $name): string
+    {
+        $literal = $this->escapeLiteral($name);
+        return "[
+            (string_content) @str (#eq? @str \"{$literal}\")
+            (name) @const (#eq? @const \"{$literal}\")
+        ] @item";
+    }
+
+    private function overrideReference(array $symbol, string $name): ?string
+    {
+        $parentSymbol = $symbol['parent_symbol'] ?? null;
+        if (!$parentSymbol) return null;
+
+        $methodName = $symbol['name'] ?? null;
+        if (!$methodName) return null;
+
+        $parentShort = basename(str_replace('\\', '/', $parentSymbol));
+        $escapedParent = $this->escapeLiteral($parentShort);
+        $escapedMethod = $this->escapeLiteral($methodName);
+
+        // Find classes extending the parent and declaring the method
+        return "(class_declaration 
+            (base_clause (name) @base (#eq? @base \"{$escapedParent}\"))
+            (declaration_list (method_declaration name: (name) @method (#eq? @method \"{$escapedMethod}\")))
+        ) @item";
     }
 
     private function twigReference(string $name): string

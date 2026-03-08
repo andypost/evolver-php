@@ -6,9 +6,8 @@ namespace DrupalEvolver\Tests\Unit\Indexer;
 
 use DrupalEvolver\Indexer\Extractor\YAMLExtractor;
 use DrupalEvolver\TreeSitter\Parser;
-use PHPUnit\Framework\TestCase;
 
-class YAMLExtractorTest extends TestCase
+class YAMLExtractorTest extends BaseExtractorTestCase
 {
     private ?Parser $parser = null;
     private ?YAMLExtractor $extractor = null;
@@ -22,136 +21,78 @@ class YAMLExtractorTest extends TestCase
         putenv('EVOLVER_USE_CLI=0');
         putenv('EVOLVER_GRAMMAR_PATH=/usr/lib');
 
-        try {
-            $this->parser = new Parser();
-            $this->extractor = new YAMLExtractor($this->parser->registry());
-        } catch (\RuntimeException $e) {
-            $this->markTestSkipped('Tree-sitter parser unavailable: ' . $e->getMessage());
-        }
+        $this->parser = new Parser();
+        $this->extractor = new YAMLExtractor($this->parser->registry());
     }
 
-    public function testExtractsInfoFileWithSemanticMetadata(): void
+    public function testExtractsServices(): void
     {
-        $symbols = $this->extract(<<<'YAML'
-name: Example module
-type: module
-description: Example description
-dependencies:
-  - drupal:block
-  - drupal:node (>=11)
-configure: example.settings
-libraries-extend:
-  core/drupal.dialog:
-    - example/dialog
-YAML, 'modules/custom/example/example.info.yml');
+        $source = $this->getFixture('yaml/services.yml');
+        $symbols = $this->extractSymbols($source, 'my_module.services.yml');
 
-        $this->assertCount(1, $symbols);
-        $symbol = $symbols[0];
-        $this->assertSame('module_info', $symbol['symbol_type']);
-        $this->assertSame('example', $symbol['fqn']);
-        $this->assertSame('example', $symbol['name']);
-
-        $signature = json_decode((string) $symbol['signature_json'], true);
-        $metadata = json_decode((string) $symbol['metadata_json'], true);
-
-        $this->assertSame('module', $signature['type']);
-        $this->assertSame(['drupal:block', 'drupal:node (>=11)'], $signature['dependencies']);
-        $this->assertSame('example.settings', $metadata['configure_route']);
-        $this->assertSame(['block', 'node'], $metadata['dependency_targets']);
-        $this->assertContains('core', $metadata['mentioned_extensions']);
-        $this->assertContains('example', $metadata['mentioned_extensions']);
+        $services = array_filter($symbols, fn($s) => $s['symbol_type'] === 'service');
+        $this->assertCount(1, $services);
+        $service = reset($services);
+        $this->assertEquals('my_module.example', $service['fqn']);
+        
+        $meta = json_decode($service['metadata_json'], true);
+        $this->assertEquals('Drupal\my_module\Example', $meta['class']);
     }
 
-    public function testExtractsLinksMenuEntriesWithRouteMetadata(): void
+    public function testExtractsLibraries(): void
     {
-        $symbols = $this->extract(<<<'YAML'
-block.admin_display:
-  title: 'Block layout'
-  description: 'Manage blocks'
-  parent: system.admin_structure
-  route_name: block.admin_display
-YAML, 'core/modules/block/block.links.menu.yml');
+        $source = $this->getFixture('yaml/libraries.yml');
+        $symbols = $this->extractSymbols($source, 'my_module.libraries.yml');
 
-        $this->assertCount(1, $symbols);
-        $symbol = $symbols[0];
-        $this->assertSame('link_menu', $symbol['symbol_type']);
-        $this->assertSame('block.admin_display', $symbol['fqn']);
+        $libs = array_filter($symbols, fn($s) => $s['symbol_type'] === 'drupal_library');
+        $this->assertCount(1, $libs);
+        $lib = reset($libs);
+        $this->assertEquals('global', $lib['fqn']);
 
-        $metadata = json_decode((string) $symbol['metadata_json'], true);
-        $this->assertSame('block.admin_display', $metadata['route_name']);
-        $this->assertSame('system.admin_structure', $metadata['parent']);
-        $this->assertSame(['block.admin_display'], $metadata['route_refs']);
+        $meta = json_decode($lib['metadata_json'], true);
+        $this->assertContains('css/style.css', $meta['asset_paths']);
+        $this->assertContains('js/script.js', $meta['asset_paths']);
     }
 
-    public function testExtractsConfigExportAndSkipsCompareNoiseKeys(): void
+    public function testExtractsRoutes(): void
     {
-        $symbols = $this->extract(<<<'YAML'
-uuid: 00000000-0000-0000-0000-000000000000
-langcode: en
-_core:
-  default_config_hash: abc123
-status: true
-dependencies:
-  module:
-    - node
-    - block
-third_party_settings:
-  example:
-    flag: true
-YAML, 'db/config/system.site.yml');
+        $source = $this->getFixture('yaml/routing.yml');
+        $symbols = $this->extractSymbols($source, 'my_module.routing.yml');
 
-        $this->assertCount(1, $symbols);
-        $symbol = $symbols[0];
-        $this->assertSame('config_export', $symbol['symbol_type']);
-        $this->assertSame('system.site', $symbol['fqn']);
+        $routes = array_filter($symbols, fn($s) => $s['symbol_type'] === 'drupal_route');
+        $this->assertCount(1, $routes);
+        $route = reset($routes);
+        $this->assertEquals('my_module.example', $route['fqn']);
 
-        $signature = json_decode((string) $symbol['signature_json'], true);
-        $metadata = json_decode((string) $symbol['metadata_json'], true);
-
-        $this->assertArrayNotHasKey('uuid', $signature);
-        $this->assertArrayNotHasKey('langcode', $signature);
-        $this->assertArrayNotHasKey('_core', $signature);
-        $this->assertSame(['block', 'node'], $signature['dependencies']['module']);
-        $this->assertSame(['uuid', 'langcode', '_core.default_config_hash'], $metadata['skipped_keys']);
+        $meta = json_decode($route['metadata_json'], true);
+        $this->assertEquals('/example/{param}', $meta['path']);
+        $this->assertStringContainsString('ExampleController', $meta['controller']);
+        $this->assertNotNull($meta['defaults']);
     }
 
-    public function testExtractsRecipeManifestSemantics(): void
+    public function testExtractsPermissions(): void
     {
-        $symbols = $this->extract(<<<'YAML'
-name: Standard
-type: recipe
-install:
-  - node
-  - block
-recipes:
-  - basic_html_format
-config:
-  strict: false
-YAML, 'core/recipes/standard/recipe.yml');
+        $source = $this->getFixture('yaml/permissions.yml');
+        $symbols = $this->extractSymbols($source, 'my_module.permissions.yml');
 
-        $this->assertCount(1, $symbols);
-        $symbol = $symbols[0];
-        $this->assertSame('recipe_manifest', $symbol['symbol_type']);
-        $this->assertSame('standard', $symbol['fqn']);
+        $permissions = array_filter($symbols, fn($s) => $s['symbol_type'] === 'drupal_permission');
+        $this->assertCount(2, $permissions);
 
-        $signature = json_decode((string) $symbol['signature_json'], true);
-        $metadata = json_decode((string) $symbol['metadata_json'], true);
+        $ids = array_column($permissions, 'fqn');
+        $this->assertContains('access example content', $ids);
+        $this->assertContains('administer example settings', $ids);
 
-        $this->assertSame(['block', 'node'], $signature['install']);
-        $this->assertSame(['block', 'node'], $metadata['install']);
-        $this->assertSame(['basic_html_format'], $metadata['recipes']);
+        $accessPerm = array_filter($permissions, fn($p) => $p['fqn'] === 'access example content');
+        $this->assertCount(1, $accessPerm);
+        $perm = reset($accessPerm);
+        $meta = json_decode($perm['metadata_json'], true);
+        $this->assertEquals('Access example content', $meta['title']);
+        $this->assertTrue($meta['restrict_access']);
     }
 
-    /**
-     * @return array<int, array<string, mixed>>
-     */
-    private function extract(string $source, string $filePath): array
+    private function extractSymbols(string $source, string $filePath): array
     {
-        $tree = $this->parser?->parse($source, 'yaml');
-        if ($tree === null || $this->extractor === null) {
-            $this->fail('Failed to initialize YAML extractor.');
-        }
-
+        $tree = $this->parser->parse($source, 'yaml');
         return $this->extractor->extract($tree->rootNode(), $source, $filePath);
     }
 }

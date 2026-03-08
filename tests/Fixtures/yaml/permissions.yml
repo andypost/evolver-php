@@ -1,0 +1,8 @@
+access example content:
+  title: 'Access example content'
+  description: 'Allow users to access example content'
+  restrict access: true
+
+administer example settings:
+  label: 'Administer example settings'
+  description: 'Allow users to administer example settings'

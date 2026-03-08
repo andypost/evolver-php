@@ -75,6 +75,13 @@ class CoreIndexer
 
         $this->updateFinalCounts($versionId);
 
+        // Build cross-file relations after indexing
+        $output?->writeln('Building cross-file symbol relations...');
+        $relationBuilder = new SymbolRelationBuilder($this->api);
+        $relationBuilder->buildForVersion($versionId);
+
+        $output?->writeln('');
+
         $output?->writeln('');
         $output?->writeln(sprintf('Indexing complete for version <info>%s</info>', $tag));
     }
@@ -253,6 +260,11 @@ class CoreIndexer
                         $symbolData['version_id'] = $versionId;
                         $symbolData['file_id'] = $fileId;
                         $symbolRows[] = $symbolData;
+
+                        // Identify extension metadata symbols
+                        if (str_ends_with((string)($symbolData['symbol_type'] ?? ''), '_info')) {
+                            $this->saveExtension($versionId, $symbolData, $path);
+                        }
                     }
                 }
 
@@ -275,6 +287,33 @@ class CoreIndexer
             return $persistedEntries;
         });
         unset($_tx);
+    }
+
+    private function saveExtension(int $versionId, array $symbol, string $filePath): void
+    {
+        $metadata = isset($symbol['metadata_json']) ? json_decode($symbol['metadata_json'], true) : [];
+        if (!is_array($metadata)) $metadata = [];
+        
+        $type = str_replace('_info', '', $symbol['symbol_type']);
+        $machineName = $symbol['fqn'];
+
+        (void) $this->api->db()->execute(
+            'INSERT INTO extensions (version_id, machine_name, extension_type, label, dependencies, file_path)
+             VALUES (:vid, :name, :type, :label, :deps, :path)
+             ON CONFLICT(version_id, machine_name) DO UPDATE SET
+                extension_type = excluded.extension_type,
+                label = excluded.label,
+                dependencies = excluded.dependencies,
+                file_path = excluded.file_path',
+            [
+                'vid' => $versionId,
+                'name' => $machineName,
+                'type' => $type,
+                'label' => $metadata['label'] ?? $machineName,
+                'deps' => json_encode($metadata['dependency_targets'] ?? []),
+                'path' => $filePath,
+            ]
+        );
     }
 
     private function updateFinalCounts(int $versionId): void

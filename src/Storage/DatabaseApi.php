@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace DrupalEvolver\Storage;
 
 use DrupalEvolver\Storage\Repository\ChangeRepo;
+use DrupalEvolver\Storage\Repository\ExtensionRepo;
 use DrupalEvolver\Storage\Repository\FileRepo;
 use DrupalEvolver\Storage\Repository\JobLogRepo;
 use DrupalEvolver\Storage\Repository\JobRepo;
@@ -12,6 +13,7 @@ use DrupalEvolver\Storage\Repository\MatchRepo;
 use DrupalEvolver\Storage\Repository\ProjectBranchRepo;
 use DrupalEvolver\Storage\Repository\ProjectRepo;
 use DrupalEvolver\Storage\Repository\ScanRunRepo;
+use DrupalEvolver\Storage\Repository\SymbolRelationRepo;
 use DrupalEvolver\Storage\Repository\SymbolRepo;
 use DrupalEvolver\Storage\Repository\VersionRepo;
 use Generator;
@@ -29,8 +31,10 @@ class DatabaseApi
 
     private Database $database;
     private ?VersionRepo $versionRepo = null;
+    private ?ExtensionRepo $extensionRepo = null;
     private ?FileRepo $fileRepo = null;
     private ?SymbolRepo $symbolRepo = null;
+    private ?SymbolRelationRepo $symbolRelationRepo = null;
     private ?ChangeRepo $changeRepo = null;
     private ?ProjectRepo $projectRepo = null;
     private ?ProjectBranchRepo $projectBranchRepo = null;
@@ -72,6 +76,12 @@ class DatabaseApi
     }
 
     #[\NoDiscard]
+    public function extensions(): ExtensionRepo
+    {
+        return $this->extensionRepo ??= new ExtensionRepo($this->database);
+    }
+
+    #[\NoDiscard]
     public function files(): FileRepo
     {
         return $this->fileRepo ??= new FileRepo($this->database);
@@ -81,6 +91,12 @@ class DatabaseApi
     public function symbols(): SymbolRepo
     {
         return $this->symbolRepo ??= new SymbolRepo($this->database);
+    }
+
+    #[\NoDiscard]
+    public function symbolRelations(): SymbolRelationRepo
+    {
+        return $this->symbolRelationRepo ??= new SymbolRelationRepo($this->database);
     }
 
     #[\NoDiscard]
@@ -326,24 +342,33 @@ class DatabaseApi
 
     /**
      * Symbols present in $fromVersionId but not in $toVersionId.
-     * Uses EXCEPT for ~35% speed gain over NOT EXISTS.
      *
      * @return Generator<int, array<string, mixed>>
      */
     #[\NoDiscard]
     public function findRemovedSymbols(int $fromVersionId, int $toVersionId, ?string $pathFilter = null): Generator
     {
-        // Step 1: Get the FQN+type pairs that were removed (EXCEPT is fastest).
-        $exceptSql = 'SELECT fqn, symbol_type FROM symbols WHERE version_id = :old
-                       EXCEPT
-                       SELECT fqn, symbol_type FROM symbols WHERE version_id = :new';
-        $pairs = $this->database->query($exceptSql, ['old' => $fromVersionId, 'new' => $toVersionId])->fetchAll();
+        $sql = 'SELECT s.* FROM symbols s
+                JOIN parsed_files f ON s.file_id = f.id
+                WHERE s.version_id = :old';
+        $params = ['old' => $fromVersionId, 'new' => $toVersionId];
 
-        if (empty($pairs)) {
-            return;
+        if ($pathFilter) {
+            $sql .= ' AND f.file_path LIKE :path';
+            $params['path'] = $pathFilter . '%';
         }
 
-        yield from $this->yieldSymbolsForPairs($fromVersionId, $pairs, $pathFilter);
+        $sql .= ' AND NOT EXISTS (
+                   SELECT 1 FROM symbols n
+                   WHERE n.version_id = :new
+                     AND n.fqn = s.fqn
+                     AND n.symbol_type = s.symbol_type
+               )';
+
+        $stmt = $this->database->query($sql, $params);
+        while ($row = $stmt->fetch()) {
+            yield $row;
+        }
     }
 
     /**
@@ -354,16 +379,27 @@ class DatabaseApi
     #[\NoDiscard]
     public function findAddedSymbols(int $fromVersionId, int $toVersionId, ?string $pathFilter = null): Generator
     {
-        $exceptSql = 'SELECT fqn, symbol_type FROM symbols WHERE version_id = :new
-                       EXCEPT
-                       SELECT fqn, symbol_type FROM symbols WHERE version_id = :old';
-        $pairs = $this->database->query($exceptSql, ['old' => $fromVersionId, 'new' => $toVersionId])->fetchAll();
+        $sql = 'SELECT s.* FROM symbols s
+                JOIN parsed_files f ON s.file_id = f.id
+                WHERE s.version_id = :new';
+        $params = ['old' => $fromVersionId, 'new' => $toVersionId];
 
-        if (empty($pairs)) {
-            return;
+        if ($pathFilter) {
+            $sql .= ' AND f.file_path LIKE :path';
+            $params['path'] = $pathFilter . '%';
         }
 
-        yield from $this->yieldSymbolsForPairs($toVersionId, $pairs, $pathFilter);
+        $sql .= ' AND NOT EXISTS (
+                   SELECT 1 FROM symbols o
+                   WHERE o.version_id = :old
+                     AND o.fqn = s.fqn
+                     AND o.symbol_type = s.symbol_type
+               )';
+
+        $stmt = $this->database->query($sql, $params);
+        while ($row = $stmt->fetch()) {
+            yield $row;
+        }
     }
 
     /**
@@ -626,7 +662,7 @@ class DatabaseApi
     public function findMatchesWithChangesForRun(int $scanRunId): array
     {
         return $this->database->query(
-            "SELECT cm.*, c.change_type, c.severity, c.old_fqn, c.new_fqn
+            "SELECT cm.*, c.change_type, c.severity, c.old_fqn, c.new_fqn, c.migration_hint, c.diff_json, c.fix_method
              FROM code_matches cm
              JOIN changes c ON cm.change_id = c.id
              WHERE cm.scan_run_id = :scan_run_id
@@ -641,6 +677,70 @@ class DatabaseApi
      * @return array{total: int, auto_fixable: int, by_severity: array<string, int>, by_change_type: array<string, int>}
      */
     #[\NoDiscard]
+    public function getExtensionImpactGraph(int $fromVersionId, int $toVersionId): array
+    {
+        $extensions = $this->extensions()->findByVersion($toVersionId);
+        $changes = $this->changes()->findByVersions($fromVersionId, $toVersionId);
+
+        // Map symbols to extensions (simplified prefix match for core)
+        $extensionChanges = [];
+        foreach ($changes as $change) {
+            $oldFqn = $change['old_fqn'] ?? '';
+            // Determine core module from FQN if possible, or join symbols table
+            // For now, let's use a simpler heuristic: count changes per extension machine name
+            // that is mentioned in dependencies.
+        }
+
+        // 1. Count changes per extension
+        // We need to know which core module each change belongs to.
+        $moduleChanges = $this->database->query(
+            "SELECT e.machine_name, COUNT(c.id) as cnt
+             FROM changes c
+             JOIN symbols s ON c.old_symbol_id = s.id
+             JOIN parsed_files f ON s.file_id = f.id
+             JOIN extensions e ON e.version_id = c.from_version_id
+             WHERE c.from_version_id = :from AND c.to_version_id = :to
+               AND f.file_path LIKE '%' || e.machine_name || '%'
+             GROUP BY e.machine_name",
+            ['from' => $fromVersionId, 'to' => $toVersionId]
+        )->fetchAll();
+
+        $changeMap = [];
+        foreach ($moduleChanges as $row) {
+            $changeMap[$row['machine_name']] = (int)$row['cnt'];
+        }
+
+        // 2. Calculate impact for each project extension
+        $graph = [];
+        foreach ($extensions as $ext) {
+            $deps = json_decode((string)$ext['dependencies'], true) ?: [];
+            $impactCount = 0;
+            $impactDetails = [];
+
+            foreach ($deps as $dep) {
+                $count = $changeMap[$dep] ?? 0;
+                if ($count > 0) {
+                    $impactCount += $count;
+                    $impactDetails[] = ['extension' => $dep, 'count' => $count];
+                }
+            }
+
+            $graph[] = [
+                'machine_name' => $ext['machine_name'],
+                'label' => $ext['label'],
+                'type' => $ext['extension_type'],
+                'direct_changes' => $changeMap[$ext['machine_name']] ?? 0,
+                'dependency_impact' => $impactCount,
+                'impact_details' => $impactDetails,
+            ];
+        }
+
+        // Sort by impact
+        usort($graph, fn($a, $b) => ($b['dependency_impact'] + $b['direct_changes']) <=> ($a['dependency_impact'] + $a['direct_changes']));
+
+        return $graph;
+    }
+
     public function summarizeScanRun(int $scanRunId): array
     {
         $rows = $this->database->query(
@@ -657,6 +757,13 @@ class DatabaseApi
             'auto_fixable' => 0,
             'by_severity' => [],
             'by_change_type' => [],
+            'by_category' => [
+                'Removals' => 0,
+                'Modernization' => 0,
+                'Signatures' => 0,
+                'Frontend' => 0,
+                'Other' => 0,
+            ],
         ];
 
         foreach ($rows as $row) {
@@ -667,12 +774,131 @@ class DatabaseApi
             $summary['by_severity'][$severity] = ($summary['by_severity'][$severity] ?? 0) + $count;
             $summary['by_change_type'][$changeType] = ($summary['by_change_type'][$changeType] ?? 0) + $count;
 
-            if (($row['fix_method'] ?? null) === 'template') {
+            // Map categories
+            $category = match (true) {
+                str_contains($changeType, 'removed') || $changeType === 'event_removed' => 'Removals',
+                str_contains($changeType, 'deprecated') || str_contains($changeType, 'renamed') || str_contains($changeType, 'to_attribute') || str_contains($changeType, 'rewrite') => 'Modernization',
+                str_contains($changeType, 'signature') || str_contains($changeType, 'parameter') || str_contains($changeType, 'return_type') || $changeType === 'inheritance_impact' => 'Signatures',
+                str_contains($changeType, 'css') || str_contains($changeType, 'library') || str_contains($changeType, 'sdc') || str_contains($changeType, 'twig') => 'Frontend',
+                default => 'Other',
+            };
+            $summary['by_category'][$category] += $count;
+
+            if (in_array($row['fix_method'] ?? null, ['template', 'pharborist'], true)) {
                 $summary['auto_fixable'] += $count;
             }
         }
 
+        // Clean up empty categories
+        foreach ($summary['by_category'] as $cat => $val) {
+            if ($val === 0) {
+                unset($summary['by_category'][$cat]);
+            }
+        }
+
         return $summary;
+    }
+
+    /**
+     * Get matches grouped by extension (module/theme) for a scan run.
+     * Groups by top-level directory (modules/custom/xyz, themes/custom/abc, etc.)
+     *
+     * @return array<string, array{count: int, by_severity: array<string, int>, matches: list<array>}>
+     */
+    #[\NoDiscard]
+    public function getMatchesGroupedByExtension(int $scanRunId): array
+    {
+        $matches = $this->database->query(
+            "SELECT cm.*, c.severity, c.change_type
+             FROM code_matches cm
+             JOIN changes c ON cm.change_id = c.id
+             WHERE cm.scan_run_id = :scan_run_id
+             ORDER BY cm.file_path",
+            ['scan_run_id' => $scanRunId]
+        )->fetchAll();
+
+        $grouped = [];
+        foreach ($matches as $match) {
+            $filePath = (string) ($match['file_path'] ?? '');
+            // Extract extension/group from path (e.g., modules/custom/my_module, themes/custom/my_theme)
+            $parts = explode('/', $filePath);
+            if (count($parts) >= 3 && in_array($parts[0] ?? '', ['modules', 'themes', 'profiles'])) {
+                $extension = ($parts[0] ?? '') . '/' . ($parts[1] ?? '') . '/' . ($parts[2] ?? '');
+            } else {
+                $extension = $parts[0] ?? 'root';
+            }
+
+            if (!isset($grouped[$extension])) {
+                $grouped[$extension] = [
+                    'count' => 0,
+                    'by_severity' => [],
+                    'by_category' => [],
+                    'matches' => [],
+                ];
+            }
+
+            $grouped[$extension]['count']++;
+            $severity = (string) ($match['severity'] ?? 'unknown');
+            $grouped[$extension]['by_severity'][$severity] = ($grouped[$extension]['by_severity'][$severity] ?? 0) + 1;
+
+            $changeType = (string) ($match['change_type'] ?? 'unknown');
+            $category = $this->categorizeChangeType($changeType);
+            $grouped[$extension]['by_category'][$category] = ($grouped[$extension]['by_category'][$category] ?? 0) + 1;
+
+            $grouped[$extension]['matches'][] = $match;
+        }
+
+        // Sort by count descending
+        uasort($grouped, fn($a, $b) => $b['count'] <=> $a['count']);
+
+        return $grouped;
+    }
+
+    /**
+     * Get matches grouped by change category.
+     *
+     * @return array<string, array{count: int, matches: list<array>}>
+     */
+    #[\NoDiscard]
+    public function getMatchesGroupedByCategory(int $scanRunId): array
+    {
+        $matches = $this->database->query(
+            "SELECT cm.*, c.severity, c.change_type
+             FROM code_matches cm
+             JOIN changes c ON cm.change_id = c.id
+             WHERE cm.scan_run_id = :scan_run_id
+             ORDER BY c.severity, cm.file_path",
+            ['scan_run_id' => $scanRunId]
+        )->fetchAll();
+
+        $categories = [
+            'Removals' => ['matches' => [], 'count' => 0],
+            'Modernization' => ['matches' => [], 'count' => 0],
+            'Signatures' => ['matches' => [], 'count' => 0],
+            'Frontend' => ['matches' => [], 'count' => 0],
+            'Other' => ['matches' => [], 'count' => 0],
+        ];
+
+        foreach ($matches as $match) {
+            $changeType = (string) ($match['change_type'] ?? 'unknown');
+            $category = $this->categorizeChangeType($changeType);
+            $categories[$category]['count']++;
+            $categories[$category]['matches'][] = $match;
+        }
+
+        // Remove empty categories
+        return array_filter($categories, fn($cat) => $cat['count'] > 0);
+    }
+
+    private function categorizeChangeType(string $changeType): string
+    {
+        return match (true) {
+            str_contains($changeType, 'removed') || $changeType === 'event_removed' => 'Removals',
+            str_contains($changeType, 'deprecated') || str_contains($changeType, 'renamed') || str_contains($changeType, 'to_attribute') || str_contains($changeType, 'rewrite') => 'Modernization',
+            str_contains($changeType, 'signature') || str_contains($changeType, 'parameter') || str_contains($changeType, 'return_type') || $changeType === 'inheritance_impact' => 'Signatures',
+            str_contains($changeType, 'css') || str_contains($changeType, 'library') || str_contains($changeType, 'sdc') || str_contains($changeType, 'twig') => 'Frontend',
+            default => 'Other',
+        };
     }
 
     // -- Status / utility queries --------------------------------------------

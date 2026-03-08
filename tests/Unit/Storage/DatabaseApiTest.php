@@ -686,6 +686,50 @@ class DatabaseApiTest extends TestCase
         $this->assertSame('system.site', $results[0]['fqn']);
     }
 
+    public function testSummarizeScanRunCountsPharboristMatchesAsAutoFixable(): void
+    {
+        $projectId = $this->api->projects()->create('test', '/tmp/test', 'module', '10.2.0');
+        $fromId = $this->api->versions()->create('10.2.0', 10, 2, 0);
+        $toId = $this->api->versions()->create('10.3.0', 10, 3, 0);
+
+        $changeId = $this->api->changes()->create([
+            'from_version_id' => $fromId,
+            'to_version_id' => $toId,
+            'language' => 'php',
+            'change_type' => 'plugin_annotation_to_attribute',
+            'severity' => 'deprecation',
+            'old_fqn' => 'demo_block',
+        ]);
+
+        $runId = $this->api->scanRuns()->create(
+            $projectId,
+            'main',
+            null,
+            null,
+            '10.2.0',
+            '10.3.0',
+            'completed',
+        );
+
+        $matchId = $this->api->matches()->create([
+            'project_id' => $projectId,
+            'scan_run_id' => $runId,
+            'change_id' => $changeId,
+            'file_path' => 'src/Plugin/Block/DemoBlock.php',
+            'line_start' => 7,
+            'matched_source' => '@Block(...)',
+            'fix_method' => 'pharborist',
+        ]);
+        $this->assertGreaterThan(0, $matchId);
+
+        $summary = $this->api->summarizeScanRun($runId);
+
+        $this->assertSame(1, $summary['total']);
+        $this->assertSame(1, $summary['auto_fixable']);
+        $this->assertSame(1, $summary['by_change_type']['plugin_annotation_to_attribute']);
+        $this->assertSame(1, $summary['by_category']['Modernization']);
+    }
+
     private function createSymbol(array $data): int
     {
         $id = $this->api->symbols()->create($data);

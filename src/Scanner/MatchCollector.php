@@ -75,7 +75,7 @@ class MatchCollector
                     }
 
                     yield [
-                        'change_id' => $change['id'],
+                        'change_id' => $change['id'] > 0 ? $change['id'] : null,
                         'line_start' => $matchNode->startPoint()['row'] + 1,
                         'line_end' => $matchNode->endPoint()['row'] + 1,
                         'byte_start' => $matchNode->startByte(),
@@ -84,6 +84,10 @@ class MatchCollector
                         'fix_method' => !empty($change['fix_template']) ? 'template' : 'manual',
                         'suggested_fix' => null,
                         'status' => 'pending',
+                        'change_type' => $change['metadata']['change_type'] ?? null,
+                        'severity' => $change['metadata']['severity'] ?? null,
+                        'old_fqn' => $change['metadata']['old_fqn'] ?? null,
+                        'migration_hint' => $change['metadata']['migration_hint'] ?? null,
                     ];
                 }
             } catch (\Throwable) {

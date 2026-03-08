@@ -18,6 +18,27 @@
     <div class="grid two-up">
         <section class="panel">
             <div class="panel-head">
+                <h2>Compare & Analyze Impact</h2>
+            </div>
+            <p class="muted">Analyze how an upgrade to this version impacts the internal extension graph.</p>
+            <form action="/versions/{{ version.id }}/compare" method="get" class="form">
+                <label>
+                    <span>Compare with base version</span>
+                    <select name="with" required>
+                        <option value="">-- Select base version --</option>
+                        {% for av in available_versions %}
+                            {% if av.id != version.id %}
+                                <option value="{{ av.id }}">{{ av.tag }}</option>
+                            {% endif %}
+                        {% endfor %}
+                    </select>
+                </label>
+                <button type="submit" class="button">Analyze Impact</button>
+            </form>
+        </section>
+
+        <section class="panel">
+            <div class="panel-head">
                 <h2>Statistics</h2>
             </div>
             <div class="stat-grid">

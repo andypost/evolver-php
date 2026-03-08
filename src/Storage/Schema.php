@@ -18,6 +18,8 @@ final class Schema
         $this->ensureColumnExists('projects', 'source_type', "TEXT NOT NULL DEFAULT 'local_path'");
         $this->ensureColumnExists('projects', 'remote_url', 'TEXT');
         $this->ensureColumnExists('projects', 'default_branch', 'TEXT');
+        $this->ensureColumnExists('projects', 'package_name', 'TEXT');
+        $this->ensureColumnExists('projects', 'root_name', 'TEXT');
 
         $this->migrateCodeMatchesTable();
         $this->ensureCodeMatchIndexes();
@@ -33,7 +35,7 @@ final class Schema
 
         $this->db->pdo()->exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_project_path ON projects(path)');
         $_ = $this->db->execute(
-            "INSERT OR REPLACE INTO schema_meta (key, value) VALUES ('schema_version', '3')"
+            "INSERT OR REPLACE INTO schema_meta (key, value) VALUES ('schema_version', '5')"
         );
     }
 
@@ -53,6 +55,17 @@ final class Schema
                 file_count   INTEGER DEFAULT 0,
                 symbol_count INTEGER DEFAULT 0,
                 indexed_at   TEXT
+            )',
+
+            'CREATE TABLE IF NOT EXISTS extensions (
+                id              INTEGER PRIMARY KEY,
+                version_id      INTEGER NOT NULL REFERENCES versions(id),
+                machine_name    TEXT NOT NULL,
+                extension_type  TEXT NOT NULL, -- module, theme, profile
+                label           TEXT,
+                dependencies    TEXT, -- JSON list
+                file_path       TEXT,
+                UNIQUE(version_id, machine_name)
             )',
 
             'CREATE TABLE IF NOT EXISTS parsed_files (
@@ -124,6 +137,7 @@ final class Schema
                 diff_json       TEXT,
                 ts_query        TEXT,
                 fix_template    TEXT,
+                fix_method      TEXT,
                 migration_hint  TEXT,
                 confidence      REAL DEFAULT 1.0,
                 created_at      TEXT DEFAULT (datetime(\'now\'))
@@ -226,6 +240,21 @@ final class Schema
 
             $this->codeMatchesTableSql(),
 
+            'CREATE TABLE IF NOT EXISTS symbol_relations (
+                id              INTEGER PRIMARY KEY,
+                version_id      INTEGER NOT NULL REFERENCES versions(id) ON DELETE CASCADE,
+                from_symbol_id  INTEGER REFERENCES symbols(id) ON DELETE CASCADE,
+                to_symbol_id    INTEGER REFERENCES symbols(id) ON DELETE CASCADE,
+                relation_type   TEXT NOT NULL,
+                metadata_json   TEXT,
+                UNIQUE(version_id, from_symbol_id, to_symbol_id, relation_type)
+            )',
+
+            'CREATE INDEX IF NOT EXISTS idx_rel_version ON symbol_relations(version_id)',
+            'CREATE INDEX IF NOT EXISTS idx_rel_from_symbol ON symbol_relations(from_symbol_id)',
+            'CREATE INDEX IF NOT EXISTS idx_rel_to_symbol ON symbol_relations(to_symbol_id)',
+            'CREATE INDEX IF NOT EXISTS idx_rel_type ON symbol_relations(relation_type)',
+
             'CREATE TABLE IF NOT EXISTS schema_meta (
                 key   TEXT PRIMARY KEY,
                 value TEXT
@@ -240,7 +269,7 @@ final class Schema
             project_id     INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
             scan_run_id    INTEGER REFERENCES scan_runs(id) ON DELETE CASCADE,
             scope_key      TEXT NOT NULL,
-            change_id      INTEGER NOT NULL REFERENCES changes(id) ON DELETE CASCADE,
+            change_id      INTEGER REFERENCES changes(id) ON DELETE SET NULL,
             file_path      TEXT NOT NULL,
             line_start     INTEGER,
             line_end       INTEGER,
@@ -251,6 +280,11 @@ final class Schema
             fix_method     TEXT,
             status         TEXT DEFAULT \'pending\',
             applied_at     TEXT,
+            -- Modernization/Virtual match fields (Phase 1.3)
+            change_type     TEXT,
+            severity        TEXT,
+            old_fqn         TEXT,
+            migration_hint  TEXT,
             UNIQUE(scope_key, change_id, file_path, byte_start, byte_end)
         )';
     }
@@ -266,9 +300,13 @@ final class Schema
 
         $this->db->pdo()->exec("ALTER TABLE {$table} ADD COLUMN {$column} {$type}");
     }
-
     private function migrateCodeMatchesTable(): void
     {
+        $this->ensureColumnExists('code_matches', 'change_type', 'TEXT');
+        $this->ensureColumnExists('code_matches', 'severity', 'TEXT');
+        $this->ensureColumnExists('code_matches', 'old_fqn', 'TEXT');
+        $this->ensureColumnExists('code_matches', 'migration_hint', 'TEXT');
+
         $columns = $this->db->query("PRAGMA table_info(code_matches)")->fetchAll();
         if ($columns === []) {
             return;

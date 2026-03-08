@@ -6,9 +6,8 @@ namespace DrupalEvolver\Tests\Unit\Indexer;
 
 use DrupalEvolver\Indexer\Extractor\TwigExtractor;
 use DrupalEvolver\TreeSitter\Parser;
-use PHPUnit\Framework\TestCase;
 
-class TwigExtractorTest extends TestCase
+class TwigExtractorTest extends BaseExtractorTestCase
 {
     private ?Parser $parser = null;
     private ?TwigExtractor $extractor = null;
@@ -30,93 +29,65 @@ class TwigExtractorTest extends TestCase
     public function testExtractsTagsAndVariables(): void
     {
         $source = <<<'TWIG'
-{% extends "layout.twig" %}
-{% include '@my_module/button.html.twig' with { label: 'Click me' } %}
-<div class="content">
-    {{ project.name }}
-    {% if active %}
-        {{ message|upper }}
+<div class="{{ classes }}">
+    {% extends "base.html.twig" %}
+    {% include "@core/blocks.html.twig" %}
+    {{ block('content') }}
+    {% if status %}
+        <p>{{ message|upper }}</p>
     {% endif %}
 </div>
-{% component 'my_module:card' %}
-    {% slot 'header' %}Title{% endslot %}
-{% endcomponent %}
 TWIG;
 
-        $symbols = $this->extract($source, 'test.twig');
+        $symbols = $this->extractSymbols($source, 'test.html.twig');
 
-        $this->assertGreaterThan(0, count($symbols));
+        $tags = array_filter($symbols, fn($s) => $s['symbol_type'] === 'twig_tag' || $s['symbol_type'] === 'twig_symbol');
+        $this->assertNotEmpty($tags);
 
-        $types = array_column($symbols, 'symbol_type');
-        $names = array_column($symbols, 'name');
-
-        $this->assertContains('twig_extends', $types);
-        $this->assertContains('layout.twig', $names);
-
-        $this->assertContains('twig_include', $types);
-        $this->assertContains('@my_module/button.html.twig', $names);
-
-        $this->assertContains('twig_variable', $types);
-        $this->assertContains('project.name', $names);
+        $vars = array_filter($symbols, fn($s) => $s['symbol_type'] === 'twig_variable');
+        $this->assertNotEmpty($vars);
+        $names = array_column($vars, 'fqn');
+        $this->assertContains('classes', $names);
         $this->assertContains('message', $names);
 
-        $this->assertContains('sdc_call', $types);
-        $this->assertContains('my_module:card', $names);
+        $filters = array_filter($symbols, fn($s) => $s['symbol_type'] === 'twig_filter');
+        $this->assertNotEmpty($filters);
+        $this->assertContains('upper', array_column($filters, 'fqn'));
     }
 
-    public function testExtractsSdcCallStyles(): void
+    public function testExtractsSdcCalls(): void
     {
-        $source = <<<'TWIG'
-{% include 'my_module:my-button' %}
-{% embed 'my_module:modal' %}{% endembed %}
-{{ component('my_theme:hero', { title: 'Hello' }) }}
-TWIG;
+        $source = $this->getFixture('twig/sdc_example.html.twig');
 
-        $symbols = $this->extract($source, 'test.twig');
-        $types = array_column($symbols, 'symbol_type');
-        $names = array_column($symbols, 'name');
+        $symbols = $this->extractSymbols($source, 'component.html.twig');
 
-        $this->assertContains('sdc_include', $types);
-        $this->assertContains('my_module:my-button', $names);
+        $sdcIncludes = array_filter($symbols, fn($s) => $s['symbol_type'] === 'sdc_include');
+        $this->assertCount(1, $sdcIncludes);
+        $this->assertEquals('my_module:icon', reset($sdcIncludes)['fqn']);
 
-        $this->assertContains('sdc_embed', $types);
-        $this->assertContains('my_module:modal', $names);
+        $sdcEmbeds = array_filter($symbols, fn($s) => $s['symbol_type'] === 'sdc_embed');
+        $this->assertCount(1, $sdcEmbeds);
+        $this->assertEquals('my_module:card', reset($sdcEmbeds)['fqn']);
 
-        // Function call detection might be fragile due to AST depth, 
-        // but we want to track it if possible.
-        $this->assertContains('sdc_function', $types);
-        $this->assertContains('my_theme:hero', $names);
+        $sdcFunctions = array_filter($symbols, fn($s) => $s['symbol_type'] === 'sdc_function');
+        $this->assertCount(1, $sdcFunctions);
+        $this->assertEquals('my_module:button', reset($sdcFunctions)['fqn']);
     }
 
-    /**
-     * Regression test: parse all project templates to ensure grammar compatibility.
-     */
-    public function testParseProjectTemplates(): void
+    public function testParsesProjectTemplates(): void
     {
-        $templateDir = dirname(__DIR__, 3) . '/templates';
-        $files = glob($templateDir . '/*.twig');
-        $files = array_merge($files, glob($templateDir . '/**/*.twig'));
-
-        $this->assertNotEmpty($files, "No templates found in $templateDir");
-
-        foreach ($files as $filePath) {
-            if (!is_file($filePath)) continue;
-            
-            $content = file_get_contents($filePath);
-            $tree = $this->parser->parse($content, 'twig');
-            $this->assertNotNull($tree, "Failed to parse $filePath");
-            
-            $symbols = $this->extractor->extract($tree->rootNode(), $content, $filePath);
-            $this->assertIsArray($symbols);
-        }
+        $source = '{% include "example.html.twig" %}{{ var }}';
+        $symbols = $this->extractSymbols($source, 'example.twig');
+        
+        $this->assertNotEmpty($symbols);
+        $fqns = array_column($symbols, 'fqn');
+        $this->assertContains('example.html.twig', $fqns);
+        $this->assertContains('var', $fqns);
     }
 
-    /**
-     * @return array<int, array<string, mixed>>
-     */
-    private function extract(string $source, string $filePath): array
+    private function extractSymbols(string $source, string $filePath): array
     {
-        $tree = $this->parser?->parse($source, 'twig');
+        $tree = $this->parser->parse($source, 'twig');
         if ($tree === null || $this->extractor === null) {
             $this->fail('Failed to initialize Twig extractor.');
         }

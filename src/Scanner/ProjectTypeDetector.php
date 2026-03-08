@@ -20,36 +20,78 @@ final class ProjectTypeDetector
      */
     public function detect(string $projectPath): ?string
     {
+        $metadata = $this->detectMetadata($projectPath);
+        return $metadata['type'] ?? null;
+    }
+
+    /**
+     * Detect complete project metadata including type, package name, and root name.
+     *
+     * @return array{type: ?string, package_name: ?string, root_name: ?string}
+     */
+    public function detectMetadata(string $projectPath): array
+    {
         $projectPath = rtrim($projectPath, '/');
+        $result = [
+            'type' => null,
+            'package_name' => null,
+            'root_name' => null,
+        ];
 
         // 1. Check for Drupal core (core/lib/Drupal.php or core/composer.json)
         if ($this->isDrupalCore($projectPath)) {
-            return self::TYPE_DRUPAL_CORE;
+            $result['type'] = self::TYPE_DRUPAL_CORE;
+            $result['package_name'] = 'drupal/core';
+            return $result;
         }
 
         // 2. Check for Drupal site (sites/default/settings.php)
         if ($this->isDrupalSite($projectPath)) {
-            return self::TYPE_DRUPAL_SITE;
+            $result['type'] = self::TYPE_DRUPAL_SITE;
+            // Try to get package name from composer.json
+            $composerData = $this->loadComposerJson($projectPath);
+            if ($composerData !== null) {
+                $result['package_name'] = $composerData['name'] ?? null;
+            }
+            return $result;
         }
 
         // 3. Check for Drupal module, theme, profile
         $infoResult = $this->scanInfoYaml($projectPath);
         if (($infoResult['type'] ?? null) !== null) {
-            return $infoResult['type'];
+            $result['type'] = $infoResult['type'];
+            $result['root_name'] = $infoResult['name'] ?? null;
+            // Try to get package name from composer.json
+            $composerData = $this->loadComposerJson($projectPath);
+            if ($composerData !== null) {
+                $result['package_name'] = $composerData['name'] ?? null;
+            }
+            return $result;
         }
 
         // 4. Check by file extension patterns
         $type = $this->detectByFilePattern($projectPath);
         if ($type !== null) {
-            return $type;
+            $result['type'] = $type;
+            // Try to get package name from composer.json
+            $composerData = $this->loadComposerJson($projectPath);
+            if ($composerData !== null) {
+                $result['package_name'] = $composerData['name'] ?? null;
+            }
+            return $result;
         }
 
         // 5. Check for Symfony
         if ($this->isSymfonyProject($projectPath)) {
-            return self::TYPE_SYMFONY;
+            $result['type'] = self::TYPE_SYMFONY;
+            $composerData = $this->loadComposerJson($projectPath);
+            if ($composerData !== null) {
+                $result['package_name'] = $composerData['name'] ?? null;
+            }
+            return $result;
         }
 
-        return null;
+        return $result;
     }
 
     /**
@@ -70,6 +112,26 @@ final class ProjectTypeDetector
         }
 
         return false;
+    }
+
+    /**
+     * Load composer.json from project path.
+     * @return array<string, mixed>|null
+     */
+    private function loadComposerJson(string $projectPath): ?array
+    {
+        $composerPath = $projectPath . '/composer.json';
+        if (!file_exists($composerPath)) {
+            return null;
+        }
+
+        $content = file_get_contents($composerPath);
+        if ($content === false) {
+            return null;
+        }
+
+        $composer = json_decode($content, true);
+        return is_array($composer) ? $composer : null;
     }
 
     /**

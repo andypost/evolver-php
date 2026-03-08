@@ -70,10 +70,10 @@ class PHPExtractor implements ExtractorInterface
                 match ($captureName) {
                     'namespace' => $this->extractNamespace($node),
                     'function' => $this->extractFunction($node, $source, $filePath),
-                    'class', 'interface', 'trait' => $this->extractClassLike($node, $captureName),
+                    'class', 'interface', 'trait' => $this->extractClassLike($node, $captureName, $source, $filePath),
                     'method' => $this->extractMethod($node, $source, $filePath),
                     'constant' => $this->extractConstant($node, $source, $filePath),
-                    'attribute' => $this->extractHook($node, $source, $filePath),
+                    'attribute' => null, // Handled within class context
                     'call' => $this->checkDeprecation($node, $source),
                     default => null,
                 };
@@ -96,7 +96,7 @@ class PHPExtractor implements ExtractorInterface
         } elseif ($type === 'function_definition') {
             $this->extractFunction($node, $source, $filePath);
         } elseif (in_array($type, ['class_declaration', 'interface_declaration', 'trait_declaration'], true)) {
-            $this->extractClassLike($node, str_replace('_declaration', '', $type));
+            $this->extractClassLike($node, str_replace('_declaration', '', $type), $source, $filePath);
         } elseif ($type === 'method_declaration') {
             $this->extractMethod($node, $source, $filePath);
         } elseif ($type === 'const_declaration') {
@@ -116,7 +116,7 @@ class PHPExtractor implements ExtractorInterface
         }
     }
 
-    private function extractClassLike(Node $node, string $type): void
+    private function extractClassLike(Node $node, string $type, string $source, string $filePath): void
     {
         $name = $node->childByFieldName('name');
         if (!$name) {
@@ -131,22 +131,21 @@ class PHPExtractor implements ExtractorInterface
         $this->currentClassEndByte = $node->endByte();
 
         $parentClass = null;
-        $interfaces = null;
+        $interfacesText = null;
 
         if ($type === 'class') {
-            $baseClause = $node->childByFieldName('base_clause');
-            if ($baseClause) {
-                $parentClass = preg_replace('/^extends\s+/', '', $baseClause->text());
-            }
-            $implementsClause = $node->childByFieldName('interfaces');
-            if ($implementsClause) {
-                $interfaces = preg_replace('/^implements\s+/', '', $implementsClause->text());
+            foreach ($node->namedChildren() as $child) {
+                if ($child->type() === 'base_clause') {
+                    $parentClass = preg_replace('/^extends\s+/', '', $child->text());
+                } elseif ($child->type() === 'class_interface_clause') {
+                    $interfacesText = preg_replace('/^implements\s+/', '', $child->text());
+                }
             }
         }
 
         $docblock = $this->findDocblock($node);
-        $sigJson = $type === 'class' ? json_encode(['parent' => $parentClass, 'interfaces' => $interfaces]) : null;
-        $hashData = $type === 'class' ? "class|{$fqn}|{$parentClass}|{$interfaces}" : "{$type}|{$fqn}";
+        $sigJson = $type === 'class' ? json_encode(['parent' => $parentClass, 'interfaces' => $interfacesText]) : null;
+        $hashData = $type === 'class' ? "class|{$fqn}|{$parentClass}|{$interfacesText}" : "{$type}|{$fqn}";
 
         $symbol = [
             'language' => 'php',
@@ -166,6 +165,82 @@ class PHPExtractor implements ExtractorInterface
 
         $this->applyDeprecationFromDocblock($symbol, $docblock);
         $this->symbols[] = $symbol;
+
+        if ($type === 'class') {
+            $this->checkSpecialDrupalClasses($node, $symbol, $docblock, $interfacesText);
+            $this->extractClassAttributes($node, $source, $filePath, $fqn, $this->currentNamespace);
+        }
+    }
+
+    private function extractClassAttributes(Node $node, string $source, string $filePath, string $parentFqn, string $namespace): void
+    {
+        $node->walk(function (Node $child) use ($source, $filePath, $parentFqn, $namespace) {
+            if ($child->type() === 'attribute') {
+                $oldNamespace = $this->currentNamespace;
+                $oldClass = $this->currentClassFqn;
+                
+                $this->currentNamespace = $namespace;
+                $this->currentClassFqn = $parentFqn;
+                
+                $this->extractHook($child, $source, $filePath);
+                
+                $this->currentNamespace = $oldNamespace;
+                $this->currentClassFqn = $oldClass;
+            }
+            // Skip recursing into bodies of methods or other nested things to avoid noise
+            if ($child->type() === 'declaration_list' || $child->type() === 'compound_statement') {
+                return false;
+            }
+        });
+    }
+
+    private function checkSpecialDrupalClasses(Node $node, array $symbol, ?string $docblock, ?string $interfaces): void
+    {
+        if ($docblock) {
+            if (preg_match('/@(\w+)\s*\(\s*.*?\bid\s*[:=]\s*["\']([^"\']+)["\']/is', $docblock, $m)) {
+                $this->symbols[] = array_merge($symbol, [
+                    'symbol_type' => 'plugin_definition',
+                    'fqn' => $m[2],
+                    'name' => $m[1],
+                    'metadata_json' => json_encode(['plugin_type' => $m[1], 'plugin_id' => $m[2]]),
+                ]);
+            }
+        }
+
+        if ($interfaces && str_contains($interfaces, 'EventSubscriberInterface')) {
+            $events = $this->extractSubscribedEvents($node, $symbol['source_text']);
+            $this->symbols[] = array_merge($symbol, [
+                'symbol_type' => 'event_subscriber',
+                'metadata_json' => json_encode(['events' => $events]),
+            ]);
+        }
+    }
+
+    private function extractSubscribedEvents(Node $node, string $source): array
+    {
+        $events = [];
+        $methodNode = null;
+        $node->walk(function (Node $child) use (&$methodNode) {
+            if ($child->type() === 'method_declaration') {
+                $nameNode = $child->childByFieldName('name');
+                if ($nameNode && $nameNode->text() === 'getSubscribedEvents') {
+                    $methodNode = $child;
+                    return false;
+                }
+            }
+        });
+
+        if ($methodNode) {
+            $methodNode->walk(function (Node $n) use (&$events) {
+                if ($n->type() === 'string' || $n->type() === 'encapsed_string') {
+                    $events[] = trim($n->text(), "\"'");
+                } elseif ($n->type() === 'class_constant_access_expression') {
+                    $events[] = $n->text();
+                }
+            });
+        }
+
+        return array_values(array_unique(array_filter($events)));
     }
 
     private function extractFunction(Node $node, string $source, string $filePath): void
@@ -205,11 +280,7 @@ class PHPExtractor implements ExtractorInterface
 
     private function checkProceduralHook(array $symbol, string $filePath): void
     {
-        if (!$this->adapter->isHookFile($filePath)) {
-            return;
-        }
-
-        if ($symbol['namespace'] !== null) {
+        if (!$this->adapter->isHookFile($filePath) || $symbol['namespace'] !== null) {
             return;
         }
 
@@ -277,25 +348,31 @@ class PHPExtractor implements ExtractorInterface
     {
         foreach ($node->namedChildren() as $child) {
             if ($child->type() === 'const_element') {
-                $name = $child->childByFieldName('name');
-                if (!$name) {
+                // const_element doesn't have a 'name' field, the first named child is the name
+                $nameNode = $child->namedChild(0);
+                if (!$nameNode || $nameNode->type() !== 'name') {
                     continue;
                 }
 
-                $shortName = $name->text();
+                $shortName = $nameNode->text();
                 $parentClass = $this->currentClassFqn;
                 $fqn = $parentClass
                     ? $parentClass . '::' . $shortName
                     : ($this->currentNamespace ? $this->currentNamespace . '\\' . $shortName : $shortName);
 
+                $symbolType = 'constant';
+                if ($parentClass && (str_contains($parentClass, 'Events') || str_contains($parentClass, 'Event'))) {
+                    $symbolType = 'drupal_event';
+                }
+
                 $this->symbols[] = [
                     'language' => 'php',
-                    'symbol_type' => 'constant',
+                    'symbol_type' => $symbolType,
                     'fqn' => $fqn,
                     'name' => $shortName,
                     'namespace' => $this->currentNamespace ?: null,
                     'parent_symbol' => $parentClass,
-                    'signature_hash' => hash('sha256', "constant|{$fqn}"),
+                    'signature_hash' => hash('sha256', "{$symbolType}|{$fqn}"),
                     'source_text' => $node->text(),
                     'line_start' => $node->startPoint()['row'] + 1,
                     'line_end' => $node->endPoint()['row'] + 1,
@@ -308,72 +385,94 @@ class PHPExtractor implements ExtractorInterface
 
     private function extractHook(Node $node, string $source, string $filePath): void
     {
-        $name = $node->namedChild(0);
-        if (!$name || $name->text() !== 'Hook') {
+        $attrNameNode = $node->childByFieldName('name') ?? $node->namedChild(0);
+        if (!$attrNameNode) {
             return;
         }
 
-        $args = $node->childByFieldName('parameters');
-        if (!$args) {
-            return;
-        }
+        $attrName = $attrNameNode->text();
+        $args = $node->childByFieldName('parameters') ?? $node->namedChild(1);
 
-        $hookName = '';
-        foreach ($args->namedChildren() as $arg) {
-            if ($arg->type() === 'argument') {
-                $val = $arg->namedChild(0);
-                if ($val && $val->type() === 'string') {
-                    $hookName = trim($val->text(), "'\"");
-                } else {
-                    $hookName = trim($arg->text(), "'\"");
+        if ($attrName === 'Hook' || str_ends_with($attrName, '\\Hook')) {
+            if (!$args) return;
+            $hookName = '';
+            $args->walk(function (Node $n) use (&$hookName) {
+                if ($n->type() === 'string' || $n->type() === 'encapsed_string') {
+                    if ($hookName === '') $hookName = trim($n->text(), "\"'");
                 }
-                break;
+            });
+
+            if ($hookName) {
+                $this->symbols[] = [
+                    'language' => 'php',
+                    'symbol_type' => 'hook',
+                    'fqn' => $hookName,
+                    'name' => $hookName,
+                    'namespace' => $this->currentNamespace ?: null,
+                    'source_text' => $node->text(),
+                    'line_start' => $node->startPoint()['row'] + 1,
+                    'line_end' => $node->endPoint()['row'] + 1,
+                    'byte_start' => $node->startByte(),
+                    'byte_end' => $node->endByte(),
+                ];
+            }
+            return;
+        }
+
+        if ($args) {
+            $pluginId = null;
+            foreach ($args->namedChildren() as $arg) {
+                if ($arg->type() === 'argument') {
+                    $nameNode = $arg->childByFieldName('name');
+                    $valueNode = $arg->childByFieldName('value') ?? $arg->namedChild(1);
+                    if ($nameNode && $nameNode->text() === 'id') {
+                        if ($valueNode && ($valueNode->type() === 'string' || $valueNode->type() === 'encapsed_string')) {
+                            $pluginId = trim($valueNode->text(), "\"'");
+                        }
+                        break;
+                    }
+                    if (!$nameNode && $valueNode && ($valueNode->type() === 'string' || $valueNode->type() === 'encapsed_string')) {
+                        if ($pluginId === null) {
+                            $pluginId = trim($valueNode->text(), "\"'");
+                        }
+                    }
+                }
+            }
+
+            if ($pluginId) {
+                $this->symbols[] = [
+                    'language' => 'php',
+                    'symbol_type' => 'plugin_definition',
+                    'fqn' => $pluginId,
+                    'name' => $attrName,
+                    'namespace' => $this->currentNamespace ?: null,
+                    'metadata_json' => json_encode(['plugin_type' => $attrName, 'plugin_id' => $pluginId]),
+                    'source_text' => $node->text(),
+                    'line_start' => $node->startPoint()['row'] + 1,
+                    'line_end' => $node->endPoint()['row'] + 1,
+                    'byte_start' => $node->startByte(),
+                    'byte_end' => $node->endByte(),
+                ];
             }
         }
-
-        if (!$hookName) {
-            return;
-        }
-
-        $this->symbols[] = [
-            'language' => 'php',
-            'symbol_type' => 'hook',
-            'fqn' => $hookName,
-            'name' => $hookName,
-            'namespace' => $this->currentNamespace ?: null,
-            'source_text' => $node->text(),
-            'line_start' => $node->startPoint()['row'] + 1,
-            'line_end' => $node->endPoint()['row'] + 1,
-            'byte_start' => $node->startByte(),
-            'byte_end' => $node->endByte(),
-        ];
     }
 
     private function checkDeprecation(Node $node, string $source): void
     {
         $fn = $node->childByFieldName('function');
-        if (!$fn) {
-            return;
-        }
+        if (!$fn) return;
 
         $fnText = $fn->text();
-        if (!in_array($fnText, ['trigger_error', '@trigger_error', 'trigger_deprecation'], true)) {
-            return;
-        }
+        if (!in_array($fnText, ['trigger_error', '@trigger_error', 'trigger_deprecation'], true)) return;
 
         $args = $node->childByFieldName('arguments');
-        if (!$args) {
-            return;
-        }
+        if (!$args) return;
 
         $argText = $args->text();
-
         if ($fnText === 'trigger_deprecation') {
-            // Symfony: trigger_deprecation('symfony/pkg', '7.1', 'The "%s" ... is deprecated')
             $depVersion = preg_match("/,\s*['\"](\d+\.\d+)['\"],/", $argText, $m) ? $m[1] : null;
             $remVersion = null;
         } else {
-            // Drupal: trigger_error('... is deprecated in drupal:X.Y.Z and is removed from drupal:X.Y.Z ...')
             $depVersion = preg_match('/is deprecated in drupal:(\d+\.\d+\.\d+)/', $argText, $m) ? $m[1] : null;
             $remVersion = preg_match('/is removed from drupal:(\d+\.\d+\.\d+)/', $argText, $m) ? $m[1] : null;
         }
@@ -385,9 +484,7 @@ class PHPExtractor implements ExtractorInterface
             $lastSymbol['deprecation_message'] = $argText;
             $lastSymbol['deprecation_version'] = $depVersion;
             $lastSymbol['removal_version'] = $remVersion;
-            if ($hint) {
-                $lastSymbol['metadata_json'] = json_encode(['replacement_hint' => $hint]);
-            }
+            if ($hint) $lastSymbol['metadata_json'] = json_encode(['replacement_hint' => $hint]);
         }
     }
 
@@ -395,28 +492,16 @@ class PHPExtractor implements ExtractorInterface
     {
         $params = [];
         $paramList = $node->childByFieldName('parameters');
-        if (!$paramList) {
-            return $params;
-        }
+        if (!$paramList) return $params;
 
         foreach ($paramList->namedChildren() as $param) {
-            if ($param->type() !== 'simple_parameter' && $param->type() !== 'variadic_parameter' && $param->type() !== 'property_promotion_parameter') {
-                continue;
-            }
-
+            if (!in_array($param->type(), ['simple_parameter', 'variadic_parameter', 'property_promotion_parameter'], true)) continue;
             $paramData = ['name' => '', 'type' => null, 'default' => null];
-            $nameNode = $param->childByFieldName('name');
-            if ($nameNode) $paramData['name'] = $nameNode->text();
-
-            $typeNode = $param->childByFieldName('type');
-            if ($typeNode) $paramData['type'] = $typeNode->text();
-
-            $defaultNode = $param->childByFieldName('default_value');
-            if ($defaultNode) $paramData['default'] = $defaultNode->text();
-
+            if ($n = $param->childByFieldName('name')) $paramData['name'] = $n->text();
+            if ($n = $param->childByFieldName('type')) $paramData['type'] = $n->text();
+            if ($n = $param->childByFieldName('default_value')) $paramData['default'] = $n->text();
             $params[] = $paramData;
         }
-
         return $params;
     }
 
@@ -428,22 +513,18 @@ class PHPExtractor implements ExtractorInterface
 
     private function findDocblock(Node $node): ?string
     {
-        $prev = $node->prevSibling();
-        if ($prev && $prev->type() === 'comment') {
-            $text = $prev->text();
-            if (str_starts_with($text, '/**')) {
-                return $text;
-            }
+        $curr = $node->prevSibling();
+        while ($curr) {
+            if ($curr->type() === 'comment' && str_starts_with($curr->text(), '/**')) return $curr->text();
+            if ($curr->isNamed()) break;
+            $curr = $curr->prevSibling();
         }
         return null;
     }
 
     private function applyDeprecationFromDocblock(array &$symbol, ?string $docblock): void
     {
-        if (!$docblock || !str_contains($docblock, '@deprecated')) {
-            return;
-        }
-
+        if (!$docblock || !str_contains($docblock, '@deprecated')) return;
         $symbol['is_deprecated'] = 1;
         if (preg_match('/@deprecated in drupal:(\d+\.\d+\.\d+)/', $docblock, $match)) $symbol['deprecation_version'] = $match[1];
         if (preg_match('/@deprecated since Symfony (\d+\.\d+)/', $docblock, $match)) $symbol['deprecation_version'] = $match[1];

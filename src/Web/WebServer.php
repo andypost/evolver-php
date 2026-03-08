@@ -40,6 +40,9 @@ final class WebServer
     ) {
         $loader = new FilesystemLoader(__DIR__ . '/../../templates');
         $this->twig = new Environment($loader);
+        $this->twig->addFilter(new \Twig\TwigFilter('json_decode', function (string $json): array {
+            return json_decode($json, true) ?: [];
+        }));
     }
 
     public function run(string $host = '0.0.0.0', int $port = 8080): void
@@ -73,6 +76,7 @@ final class WebServer
         $router->addRoute('GET', '/runs/{id}', new ClosureRequestHandler($this->handleRunDetail(...)));
         $router->addRoute('GET', '/jobs', new ClosureRequestHandler($this->handleJobs(...)));
         $router->addRoute('GET', '/versions/{id}', new ClosureRequestHandler($this->handleVersionDetail(...)));
+        $router->addRoute('GET', '/versions/{id}/compare', new ClosureRequestHandler($this->handleVersionCompare(...)));
         $router->addRoute('GET', '/versions/{id}/symbols', new ClosureRequestHandler($this->handleVersionSymbols(...)));
         $router->addRoute('GET', '/versions/{versionId}/symbols/{symbolId}', new ClosureRequestHandler($this->handleVersionSymbolDetail(...)));
         $router->addRoute('GET', '/versions/diff/{from}/{to}', new ClosureRequestHandler($this->handleDiffDetail(...)));
@@ -126,6 +130,32 @@ final class WebServer
         return $this->html('versions/detail.twig', [
             'version' => $version,
             'stats' => $stats,
+            'available_versions' => $this->api->versions()->all(),
+        ]);
+    }
+
+    public function handleVersionCompare(Request $request): Response
+    {
+        $versionId = $this->routeId($request);
+        $version = $this->api->versions()->findById($versionId);
+        if ($version === null) {
+            return $this->text('Version not found.', HttpStatus::NOT_FOUND);
+        }
+
+        parse_str($request->getUri()->getQuery(), $query);
+        $compareWithId = isset($query['with']) ? (int) $query['with'] : null;
+        $compareWith = $compareWithId ? $this->api->versions()->findById($compareWithId) : null;
+
+        $impactGraph = [];
+        if ($compareWith) {
+            $impactGraph = $this->api->getExtensionImpactGraph($compareWithId, $versionId);
+        }
+
+        return $this->html('versions/compare.twig', [
+            'version' => $version,
+            'compareWith' => $compareWith,
+            'impactGraph' => $impactGraph,
+            'available_versions' => $this->api->versions()->all(),
         ]);
     }
 
@@ -400,11 +430,17 @@ final class WebServer
             $logs = array_reverse($this->api->jobLogs()->findByJob((int) $run['job_id']));
         }
 
+        // Group matches by extension and category
+        $byExtension = $this->api->getMatchesGroupedByExtension($runId);
+        $byCategory = $this->api->getMatchesGroupedByCategory($runId);
+
         return $this->html('run-detail.twig', [
             'project' => $project,
             'run' => $run,
             'summary' => $this->api->summarizeScanRun($runId),
             'matches' => $matches,
+            'by_extension' => $byExtension,
+            'by_category' => $byCategory,
             'logs' => $logs,
         ]);
     }

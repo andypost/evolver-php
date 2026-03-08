@@ -19,17 +19,21 @@ final class ProjectRepo
         string $sourceType = 'local_path',
         ?string $remoteUrl = null,
         ?string $defaultBranch = null,
+        ?string $packageName = null,
+        ?string $rootName = null,
     ): int {
         $written = $this->db->execute(
-            'INSERT INTO projects (name, path, type, source_type, remote_url, default_branch, core_version)
-             VALUES (:name, :path, :type, :source_type, :remote_url, :default_branch, :core_version)
+            'INSERT INTO projects (name, path, type, source_type, remote_url, default_branch, core_version, package_name, root_name)
+             VALUES (:name, :path, :type, :source_type, :remote_url, :default_branch, :core_version, :package_name, :root_name)
              ON CONFLICT(path) DO UPDATE SET
                  name = excluded.name,
                  type = excluded.type,
                  source_type = excluded.source_type,
                  remote_url = excluded.remote_url,
                  default_branch = excluded.default_branch,
-                 core_version = excluded.core_version',
+                 core_version = excluded.core_version,
+                 package_name = excluded.package_name,
+                 root_name = excluded.root_name',
             [
                 'name' => $name,
                 'path' => $path,
@@ -38,6 +42,8 @@ final class ProjectRepo
                 'remote_url' => $remoteUrl,
                 'default_branch' => $defaultBranch,
                 'core_version' => $coreVersion,
+                'package_name' => $packageName,
+                'root_name' => $rootName,
             ]
         );
 
@@ -58,8 +64,10 @@ final class ProjectRepo
         string $sourceType = 'local_path',
         ?string $remoteUrl = null,
         ?string $defaultBranch = null,
+        ?string $packageName = null,
+        ?string $rootName = null,
     ): int {
-        return $this->save($name, $path, $type, $coreVersion, $sourceType, $remoteUrl, $defaultBranch);
+        return $this->save($name, $path, $type, $coreVersion, $sourceType, $remoteUrl, $defaultBranch, $packageName, $rootName);
     }
 
     #[\NoDiscard]
@@ -118,6 +126,30 @@ final class ProjectRepo
         return $this->db->execute(
             'UPDATE projects SET type = :type WHERE id = :id',
             ['type' => $type, 'id' => $id]
+        );
+    }
+
+    public function updatePackageName(int $id, ?string $packageName): int
+    {
+        return $this->db->execute(
+            'UPDATE projects SET package_name = :package_name WHERE id = :id',
+            ['package_name' => $packageName, 'id' => $id]
+        );
+    }
+
+    public function updateRootName(int $id, ?string $rootName): int
+    {
+        return $this->db->execute(
+            'UPDATE projects SET root_name = :root_name WHERE id = :id',
+            ['root_name' => $rootName, 'id' => $id]
+        );
+    }
+
+    public function updateMetadata(int $id, ?string $type, ?string $packageName, ?string $rootName): int
+    {
+        return $this->db->execute(
+            'UPDATE projects SET type = :type, package_name = :package_name, root_name = :root_name WHERE id = :id',
+            ['type' => $type, 'package_name' => $packageName, 'root_name' => $rootName, 'id' => $id]
         );
     }
 }

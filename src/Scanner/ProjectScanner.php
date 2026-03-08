@@ -45,7 +45,20 @@ final class ProjectScanner
     ): int {
         $path = rtrim(realpath($path) ?: $path, '/');
         $projectName = basename($path);
-        $projectId = $this->api->projects()->save($projectName, $path, null, $fromVersion, 'local_path');
+
+        // Detect metadata upfront
+        $metadata = $this->typeDetector->detectMetadata($path);
+        $projectId = $this->api->projects()->save(
+            $projectName,
+            $path,
+            $metadata['type'],
+            $fromVersion,
+            'local_path',
+            null,
+            null,
+            $metadata['package_name'],
+            $metadata['root_name']
+        );
         $scanRunId = $this->api->scanRuns()->create($projectId, $projectName, null, $path, $fromVersion, $targetVersion);
 
         try {
@@ -97,13 +110,24 @@ final class ProjectScanner
             throw new \InvalidArgumentException('Both versions must be indexed first');
         }
 
-        // Auto-detect and update project type if not set
+        // Auto-detect and update project metadata if not set
         $project = $this->api->projects()->findById($projectId);
         if ($project !== null && ($project['type'] ?? null) === null) {
-            $detectedType = $this->typeDetector->detect($path);
-            if ($detectedType !== null) {
-                $this->api->projects()->updateType($projectId, $detectedType);
-                $output?->writeln("Detected project type: <info>{$detectedType}</info>");
+            $metadata = $this->typeDetector->detectMetadata($path);
+            if ($metadata['type'] !== null) {
+                $this->api->projects()->updateMetadata(
+                    $projectId,
+                    $metadata['type'],
+                    $metadata['package_name'],
+                    $metadata['root_name']
+                );
+                $output?->writeln("Detected project type: <info>{$metadata['type']}</info>");
+                if ($metadata['package_name'] !== null) {
+                    $output?->writeln("Package name: <info>{$metadata['package_name']}</info>");
+                }
+                if ($metadata['root_name'] !== null) {
+                    $output?->writeln("Root name: <info>{$metadata['root_name']}</info>");
+                }
             }
         }
 
@@ -121,12 +145,8 @@ final class ProjectScanner
         $this->api->projects()->updateCoreVersion($projectId, $fromVersion);
 
         $files = $this->collectFiles($path);
-        if ($scanRunId !== null) {
-            $this->api->scanRuns()->markRunning($scanRunId, null, $path, $fromVersion, count($files));
-        }
-
-        if ($changes === []) {
-            $this->api->projects()->updateLastScanned($projectId);
+        if ($files === []) {
+            $output?->writeln('<comment>No files found to scan in ' . $path . '</comment>');
             if ($scanRunId !== null) {
                 $this->api->scanRuns()->markCompleted($scanRunId, 0, 0, [
                     'total' => 0,
@@ -135,8 +155,11 @@ final class ProjectScanner
                     'by_change_type' => [],
                 ]);
             }
-            $output?->writeln('No matching changes found for this upgrade path.');
             return 0;
+        }
+
+        if ($scanRunId !== null) {
+            $this->api->scanRuns()->markRunning($scanRunId, null, $path, $fromVersion, count($files));
         }
 
         $changesByLanguage = [];
@@ -158,9 +181,9 @@ final class ProjectScanner
         $onProgress?->__invoke(0, count($files), 'Queued scan');
 
         if ($this->canRunParallel()) {
-            $this->scanParallel($files, $changesByLanguage, $projectId, $scanRunId, $output, $onProgress);
+            $this->scanParallel($files, $changesByLanguage, $projectId, $scanRunId, $output, $onProgress, $toVer);
         } else {
-            $this->scanSequential($files, $changesByLanguage, $projectId, $scanRunId, $output, $onProgress);
+            $this->scanSequential($files, $changesByLanguage, $projectId, $scanRunId, $output, $onProgress, $toVer);
         }
 
         $this->api->projects()->updateLastScanned($projectId);
@@ -192,6 +215,7 @@ final class ProjectScanner
         ?int $scanRunId,
         ?OutputInterface $output,
         ?callable $onProgress,
+        ?array $toVer = null
     ): void {
         $progress = $output ? new ProgressBar($output, count($files)) : null;
         $progress?->start();
@@ -206,11 +230,12 @@ final class ProjectScanner
             $progress,
             $matchRepo,
             $onProgress,
+            $toVer
         ): int {
             $scannedFiles = 0;
 
             foreach ($files as $file) {
-                $this->scanFile($file, $changesByLanguage, $projectId, $scanRunId, $this->parser, $this->matchCollector, $matchRepo);
+                $this->scanFile($file, $changesByLanguage, $projectId, $scanRunId, $this->parser, $this->matchCollector, $matchRepo, $toVer);
                 $progress?->advance();
                 $scannedFiles++;
                 $onProgress?->__invoke($scannedFiles, count($files), $file['relative_path']);
@@ -236,6 +261,7 @@ final class ProjectScanner
         ?int $scanRunId,
         ?OutputInterface $output,
         ?callable $onProgress,
+        ?array $toVer = null
     ): void {
         $chunks = array_chunk($files, (int) ceil(count($files) / $this->workerCount));
         $pids = [];
@@ -266,11 +292,11 @@ final class ProjectScanner
                 $matchRepo = new MatchRepo($db);
                 $matchCollector = new MatchCollector($parser->binding(), $parser->registry());
 
-                $scannedChunk = $db->transaction(function () use ($chunk, $changesByLanguage, $projectId, $scanRunId, $parser, $matchCollector, $matchRepo): int {
+                $scannedChunk = $db->transaction(function () use ($chunk, $changesByLanguage, $projectId, $scanRunId, $parser, $matchCollector, $matchRepo, $toVer): int {
                     $counter = 0;
 
                     foreach ($chunk as $file) {
-                        $this->scanFile($file, $changesByLanguage, $projectId, $scanRunId, $parser, $matchCollector, $matchRepo);
+                        $this->scanFile($file, $changesByLanguage, $projectId, $scanRunId, $parser, $matchCollector, $matchRepo, $toVer);
                         $counter++;
                         if (($counter % 20) === 0) {
                             gc_collect_cycles();
@@ -326,11 +352,13 @@ final class ProjectScanner
             $mainPdo->exec("INSERT OR REPLACE INTO code_matches (
                                 project_id, scan_run_id, scope_key, change_id, file_path,
                                 line_start, line_end, byte_start, byte_end,
-                                matched_source, suggested_fix, fix_method, status, applied_at
+                                matched_source, suggested_fix, fix_method, status, applied_at,
+                                change_type, severity, old_fqn, migration_hint
                             )
                             SELECT project_id, scan_run_id, scope_key, change_id, file_path,
                                    line_start, line_end, COALESCE(byte_start, -1), COALESCE(byte_end, -1),
-                                   matched_source, suggested_fix, fix_method, status, applied_at
+                                   matched_source, suggested_fix, fix_method, status, applied_at,
+                                   change_type, severity, old_fqn, migration_hint
                             FROM worker.code_matches");
             $mainPdo->commit();
         } catch (\Throwable $e) {
@@ -349,16 +377,14 @@ final class ProjectScanner
         Parser $parser,
         MatchCollector $matchCollector,
         MatchRepo $matchRepo,
+        ?array $toVer = null
     ): int {
         $filePath = $file['path'];
         $relativePath = $file['relative_path'];
         $language = $file['language'];
 
         $relevantChanges = $changesByLanguage[$language] ?? [];
-        if ($relevantChanges === []) {
-            return 0;
-        }
-
+        
         $content = file_get_contents($filePath);
         if ($content === false) {
             return 0;
@@ -369,11 +395,23 @@ final class ProjectScanner
             $root = $tree->rootNode();
             $matches = [];
 
-            foreach ($matchCollector->collectMatches($root, $content, $language, $relevantChanges) as $match) {
-                $match['project_id'] = $projectId;
-                $match['scan_run_id'] = $scanRunId;
-                $match['file_path'] = $relativePath;
-                $matches[] = $match;
+            if ($relevantChanges !== []) {
+                foreach ($matchCollector->collectMatches($root, $content, $language, $relevantChanges) as $match) {
+                    $match['project_id'] = $projectId;
+                    $match['scan_run_id'] = $scanRunId;
+                    $match['file_path'] = $relativePath;
+                    $matches[] = $match;
+                }
+            }
+
+            // Phase 1.3: Add modernization suggestions (hooks -> attributes, etc.)
+            if ($language === 'php' && $toVer && $this->versionWeight($toVer) >= 11001000) {
+                $modernization = $this->findModernizationOpportunities($root, $content, $relativePath);
+                foreach ($modernization as $m) {
+                    $m['project_id'] = $projectId;
+                    $m['scan_run_id'] = $scanRunId;
+                    $matches[] = $m;
+                }
             }
 
             $persistedMatches = 0;
@@ -386,6 +424,76 @@ final class ProjectScanner
         } catch (\Throwable) {
             return 0;
         }
+    }
+
+    private function findModernizationOpportunities(\DrupalEvolver\TreeSitter\Node $root, string $source, string $filePath): array
+    {
+        $matches = [];
+        $isHookFile = str_ends_with($filePath, '.module') || str_ends_with($filePath, '.inc') || str_ends_with($filePath, '.install');
+
+        $root->walk(function (\DrupalEvolver\TreeSitter\Node $node) use (&$matches, $isHookFile, $filePath) {
+            $type = $node->type();
+
+            // 1. Suggest #[Hook] for procedural hooks
+            if ($type === 'function_definition' && $isHookFile) {
+                $nameNode = $node->childByFieldName('name');
+                if ($nameNode) {
+                    $name = $nameNode->text();
+                    $parts = explode('_', $name);
+                    if (count($parts) > 1) {
+                        $matches[] = [
+                            'file_path' => $filePath,
+                            'line_start' => $node->startPoint()['row'] + 1,
+                            'line_end' => $node->endPoint()['row'] + 1,
+                            'byte_start' => $node->startByte(),
+                            'byte_end' => $node->endByte(),
+                            'matched_source' => $name,
+                            'change_id' => null,
+                            'change_type' => 'procedural_to_attribute',
+                            'severity' => 'info',
+                            'old_fqn' => $name,
+                            'migration_hint' => "Consider migrating this procedural hook to the #[Hook] attribute.",
+                        ];
+                    }
+                }
+            }
+
+            // 2. Suggest conversion for legacy docblock plugins
+            if ($type === 'class_declaration') {
+                $docblock = $this->findDocblock($node);
+                if ($docblock && preg_match('/@(\w+)\s*\(/', $docblock, $m)) {
+                    $annotation = $m[1];
+                    if (in_array($annotation, ['Block', 'QueueWorker', 'MigrateSource', 'ContentEntityType', 'ConfigEntityType'], true)) {
+                        $matches[] = [
+                            'file_path' => $filePath,
+                            'line_start' => $node->startPoint()['row'] + 1,
+                            'line_end' => $node->endPoint()['row'] + 1,
+                            'byte_start' => $node->startByte(),
+                            'byte_end' => $node->endByte(),
+                            'matched_source' => "@{$annotation}",
+                            'change_id' => null,
+                            'change_type' => 'annotation_to_attribute',
+                            'severity' => 'info',
+                            'old_fqn' => "@{$annotation}",
+                            'migration_hint' => "Legacy @{$annotation} annotation detected. Drupal 10.2+ supports native #[{$annotation}] attributes.",
+                        ];
+                    }
+                }
+            }
+        });
+
+        return $matches;
+    }
+
+    private function findDocblock(\DrupalEvolver\TreeSitter\Node $node): ?string
+    {
+        $curr = $node->prevSibling();
+        while ($curr) {
+            if ($curr->type() === 'comment' && str_starts_with($curr->text(), '/**')) return $curr->text();
+            if ($curr->isNamed()) break;
+            $curr = $curr->prevSibling();
+        }
+        return null;
     }
 
     private function versionWeight(array $version): int
@@ -424,7 +532,8 @@ final class ProjectScanner
             $pathname = $file->getPathname();
             $relativePath = substr($pathname, strlen($path) + 1);
 
-            // Skip core and vendor folders within the project to avoid false positives from core itself
+            // fwrite(STDERR, "CHECKING: $pathname (relative: $relativePath)\n");
+
             if (str_starts_with($relativePath, 'core/') || str_starts_with($relativePath, 'vendor/')) {
                 continue;
             }

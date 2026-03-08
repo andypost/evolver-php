@@ -48,13 +48,26 @@
             <div class="panel-head">
                 <h2>Summary</h2>
             </div>
-            <ul class="summary-list">
-                <li><span>Total findings</span><strong>{{ summary.total }}</strong></li>
-                <li><span>Auto-fixable</span><strong>{{ summary.auto_fixable }}</strong></li>
-                {% for severity, count in summary.by_severity %}
-                    <li><span>{{ severity|title }}</span><strong>{{ count }}</strong></li>
-                {% endfor %}
-            </ul>
+            <div class="grid two-up-compact">
+                <div>
+                    <p class="muted small uppercase">By Severity</p>
+                    <ul class="summary-list">
+                        <li><span>Total findings</span><strong>{{ summary.total }}</strong></li>
+                        <li><span>Auto-fixable</span><strong>{{ summary.auto_fixable }}</strong></li>
+                        {% for severity, count in summary.by_severity %}
+                            <li><span>{{ severity|title }}</span><strong>{{ count }}</strong></li>
+                        {% endfor %}
+                    </ul>
+                </div>
+                <div>
+                    <p class="muted small uppercase">By Category</p>
+                    <ul class="summary-list">
+                        {% for category, count in summary.by_category %}
+                            <li><span>{{ category }}</span><strong>{{ count }}</strong></li>
+                        {% endfor %}
+                    </ul>
+                </div>
+            </div>
         </article>
     </section>
 
@@ -73,33 +86,153 @@
 
     <section class="panel">
         <div class="panel-head">
-            <h2>Matches</h2>
+            <h2>Scan Results</h2>
+            <div class="panel-actions">
+                <button class="button small" onclick="toggleView('flat')">Flat View</button>
+                <button class="button small" onclick="toggleView('extension')">By Extension</button>
+                <button class="button small" onclick="toggleView('category')">By Category</button>
+            </div>
         </div>
-        {% if matches %}
-            <table class="table">
-                <thead>
-                <tr>
-                    <th>File</th>
-                    <th>Line</th>
-                    <th>Change</th>
-                    <th>Severity</th>
-                    <th>Fix</th>
-                </tr>
-                </thead>
-                <tbody>
-                {% for match in matches %}
-                    <tr>
-                        <td>{{ match.file_path }}</td>
-                        <td>{{ match.line_start }}</td>
-                        <td>{{ match.change_type }}</td>
-                        <td>{{ match.severity }}</td>
-                        <td>{{ match.fix_method ?: 'manual' }}</td>
-                    </tr>
+
+        {# Flat View #}
+        <div id="view-flat" class="match-view">
+            {% if matches %}
+                <div class="match-list">
+                    {% for match in matches %}
+                        <div class="match-item severity-{{ match.severity }}">
+                            <div class="match-header">
+                                <span class="match-file"><code>{{ match.file_path }}:{{ match.line_start }}</code></span>
+                                <span class="status-tag status-{{ match.severity }}">{{ match.severity }}</span>
+                                {% if match.fix_method == 'template' %}
+                                    <span class="pill success">Auto-fix available</span>
+                                {% endif %}
+                            </div>
+
+                            <div class="match-body">
+                                <h3>{{ match.old_fqn }} <span class="muted small">{{ match.change_type|replace({'_': ' '}) }}</span></h3>
+
+                                {% if match.migration_hint %}
+                                    <div class="migration-advice">
+                                        <strong>Recommendation:</strong> {{ match.migration_hint|nl2br }}
+                                    </div>
+                                {% endif %}
+
+                                {% if match.diff_json %}
+                                    {% set diff = match.diff_json|json_decode %}
+                                    <div class="match-details">
+                                        {% if match.change_type == 'signature_changed' or match.change_type == 'inheritance_impact' %}
+                                            <p class="small">Method signature shifted:</p>
+                                            <div class="diff-block">
+                                                {% for c in diff.changes %}
+                                                    <div class="diff-line">
+                                                        {% if c.type == 'parameter_added' %}
+                                                            <span class="diff-plus">+ arg {{ c.position }}: {{ c.param.name }}{{ c.param.type ? ' (' ~ c.param.type ~ ')' }}</span>
+                                                        {% elseif c.type == 'parameter_removed' %}
+                                                            <span class="diff-minus">- arg {{ c.position }}: {{ c.param.name }}</span>
+                                                        {% elseif c.type == 'parameter_type_changed' %}
+                                                            <span class="diff-change">Δ arg {{ c.position }}: {{ c.old_type }} → {{ c.new_type }}</span>
+                                                        {% endif %}
+                                                    </div>
+                                                {% endfor %}
+                                            </div>
+                                        {% endif %}
+                                    </div>
+                                {% endif %}
+                            </div>
+                        </div>
+                    {% endfor %}
+                </div>
+            {% else %}
+                <p class="empty">No matches for this run.</p>
+            {% endif %}
+        </div>
+
+        {# By Extension View #}
+        <div id="view-extension" class="match-view" style="display: none;">
+            {% if by_extension is not empty %}
+                {% for extension, data in by_extension %}
+                    <details class="panel" open>
+                        <summary class="panel-head">
+                            <h3>
+                                <code>{{ extension }}</code>
+                                <span class="pill">{{ data.count }} findings</span>
+                                {% for severity, count in data.by_severity %}
+                                    <span class="status-tag status-{{ severity }} severity-small">{{ severity }}: {{ count }}</span>
+                                {% endfor %}
+                            </h3>
+                        </summary>
+                        <div class="match-list">
+                            {% for match in data.matches %}
+                                <div class="match-item severity-{{ match.severity }}">
+                                    <div class="match-header">
+                                        <span class="match-file"><code>{{ match.file_path }}:{{ match.line_start }}</code></span>
+                                        <span class="status-tag status-{{ match.severity }}">{{ match.severity }}</span>
+                                        {% if match.fix_method == 'template' %}
+                                            <span class="pill success">Auto-fix available</span>
+                                        {% endif %}
+                                    </div>
+                                    <div class="match-body">
+                                        <h3>{{ match.old_fqn }} <span class="muted small">{{ match.change_type|replace({'_': ' '}) }}</span></h3>
+                                        {% if match.migration_hint %}
+                                            <div class="migration-advice">
+                                                <strong>Recommendation:</strong> {{ match.migration_hint|nl2br }}
+                                            </div>
+                                        {% endif %}
+                                    </div>
+                                </div>
+                            {% endfor %}
+                        </div>
+                    </details>
                 {% endfor %}
-                </tbody>
-            </table>
-        {% else %}
-            <p class="empty">No matches for this run.</p>
-        {% endif %}
+            {% else %}
+                <p class="empty">No matches for this run.</p>
+            {% endif %}
+        </div>
+
+        {# By Category View #}
+        <div id="view-category" class="match-view" style="display: none;">
+            {% if by_category is not empty %}
+                {% for category, data in by_category %}
+                    <details class="panel" open>
+                        <summary class="panel-head">
+                            <h3>
+                                {{ category }}
+                                <span class="pill">{{ data.count }} findings</span>
+                            </h3>
+                        </summary>
+                        <div class="match-list">
+                            {% for match in data.matches %}
+                                <div class="match-item severity-{{ match.severity }}">
+                                    <div class="match-header">
+                                        <span class="match-file"><code>{{ match.file_path }}:{{ match.line_start }}</code></span>
+                                        <span class="status-tag status-{{ match.severity }}">{{ match.severity }}</span>
+                                        {% if match.fix_method == 'template' %}
+                                            <span class="pill success">Auto-fix available</span>
+                                        {% endif %}
+                                    </div>
+                                    <div class="match-body">
+                                        <h3>{{ match.old_fqn }} <span class="muted small">{{ match.change_type|replace({'_': ' '}) }}</span></h3>
+                                        {% if match.migration_hint %}
+                                            <div class="migration-advice">
+                                                <strong>Recommendation:</strong> {{ match.migration_hint|nl2br }}
+                                            </div>
+                                        {% endif %}
+                                    </div>
+                                </div>
+                            {% endfor %}
+                        </div>
+                    </details>
+                {% endfor %}
+            {% else %}
+                <p class="empty">No matches for this run.</p>
+            {% endif %}
+        </div>
     </section>
+
+    <script>
+    function toggleView(view) {
+        document.querySelectorAll('.match-view').forEach(el => el.style.display = 'none');
+        document.getElementById('view-' + view).style.display = 'block';
+    }
+    </script>
 {% endblock %}

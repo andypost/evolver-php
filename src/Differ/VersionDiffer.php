@@ -90,6 +90,8 @@ class VersionDiffer
                 if ($oldId !== null) $consumedRemoved[$oldId] = true;
 
                 $changeType = (string) ($rename['change_type'] ?? (($old['symbol_type'] ?? 'symbol') . '_renamed'));
+                $migrationHint = sprintf('This %s was renamed to %s.', str_replace('_', ' ', $old['symbol_type'] ?? 'symbol'), $new['fqn']);
+                
                 $changes[] = [
                     'from_version_id' => $fromId,
                     'to_version_id' => $toId,
@@ -101,6 +103,7 @@ class VersionDiffer
                     'old_fqn' => $old['fqn'] ?? null,
                     'new_fqn' => $new['fqn'] ?? null,
                     'confidence' => $rename['confidence'] ?? 0.8,
+                    'migration_hint' => $migrationHint,
                     'ts_query' => $this->queryGenerator->generate($changeType, $old),
                     'fix_template' => $this->fixTemplateGenerator->generate($changeType, $old, $new),
                 ];
@@ -183,15 +186,22 @@ class VersionDiffer
             if ($oldId !== null && isset($consumedRemoved[$oldId])) continue;
             if ((int) ($sym['is_deprecated'] ?? 0) === 1) continue;
 
+            $changeType = $sym['symbol_type'] === 'drupal_event' ? 'event_removed' : $sym['symbol_type'] . '_removed';
+            $migrationHint = $sym['deprecation_message'] ?? null;
+            if (!$migrationHint && str_contains($changeType, 'hook')) {
+                $migrationHint = 'Procedural hooks are being deprecated. Consider migrating to #[Hook] or #[AsEventListener] attributes.';
+            }
+
             $change = [
                 'from_version_id' => $fromId,
                 'to_version_id' => $toId,
                 'language' => $sym['language'],
-                'change_type' => $sym['symbol_type'] . '_removed',
+                'change_type' => $changeType,
                 'severity' => 'breaking',
                 'old_symbol_id' => $sym['id'],
                 'old_fqn' => $sym['fqn'],
-                'ts_query' => $this->queryGenerator->generate($sym['symbol_type'] . '_removed', $sym),
+                'migration_hint' => $migrationHint,
+                'ts_query' => $this->queryGenerator->generate($changeType, $sym),
             ];
             $changes[] = $change;
         }
@@ -244,6 +254,28 @@ class VersionDiffer
                 'ts_query' => $this->queryGenerator->generate('signature_changed', $pair['old']),
                 'fix_template' => $this->fixTemplateGenerator->generate('signature_changed', $pair['old'], $pair['new'], $diffDetails),
             ];
+
+            // 2c. Add inheritance impact for method signature changes
+            if ($pair['old']['symbol_type'] === 'method' && $pair['old']['parent_symbol']) {
+                $changes[] = [
+                    'from_version_id' => $fromId,
+                    'to_version_id' => $toId,
+                    'language' => $pair['old']['language'],
+                    'change_type' => 'inheritance_impact',
+                    'severity' => 'breaking',
+                    'old_symbol_id' => $pair['old']['id'],
+                    'new_symbol_id' => $pair['new']['id'],
+                    'old_fqn' => $pair['old']['fqn'],
+                    'new_fqn' => $pair['new']['fqn'],
+                    'diff_json' => json_encode([
+                        'changes' => $diffDetails,
+                        'old' => $oldSignature,
+                        'new' => $newSignature,
+                    ]),
+                    'ts_query' => $this->queryGenerator->generate('inheritance_impact', $pair['old']),
+                ];
+            }
+
             $signatureChangeCount++;
         }
 
@@ -312,6 +344,11 @@ class VersionDiffer
 
         $newlyDeprecated = $this->api->findNewlyDeprecated($fromId, $toId, $this->pathFilter);
         foreach ($newlyDeprecated as $sym) {
+            $migrationHint = $sym['deprecation_message'] ?? null;
+            if (!$migrationHint && str_contains((string)$sym['symbol_type'], 'hook')) {
+                $migrationHint = 'This hook is newly deprecated. Consider migrating to #[Hook] or #[AsEventListener] attributes.';
+            }
+
             $changes[] = [
                 'from_version_id' => $fromId,
                 'to_version_id' => $toId,
@@ -321,12 +358,17 @@ class VersionDiffer
                 'new_symbol_id' => $sym['id'],
                 'old_fqn' => $sym['fqn'],
                 'new_fqn' => $sym['fqn'],
-                'migration_hint' => $sym['deprecation_message'],
+                'migration_hint' => $migrationHint,
             ];
         }
 
         $deprecatedRemoved = $this->api->findDeprecatedThenRemoved($fromId, $toId, $this->pathFilter);
         foreach ($deprecatedRemoved as $sym) {
+            $migrationHint = $sym['deprecation_message'] ?? null;
+            if (!$migrationHint && str_contains((string)$sym['symbol_type'], 'hook')) {
+                $migrationHint = 'This hook was removed. You must migrate to #[Hook] or #[AsEventListener] attributes.';
+            }
+
             $changes[] = [
                 'from_version_id' => $fromId,
                 'to_version_id' => $toId,
@@ -335,7 +377,7 @@ class VersionDiffer
                 'severity' => 'removal',
                 'old_symbol_id' => $sym['id'],
                 'old_fqn' => $sym['fqn'],
-                'migration_hint' => $sym['deprecation_message'],
+                'migration_hint' => $migrationHint,
             ];
         }
 

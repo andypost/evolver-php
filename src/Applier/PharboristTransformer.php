@@ -39,6 +39,7 @@ class PharboristTransformer
                 'rewrite_to_method_chain' => $this->rewriteToMethodChain($source, $script),
                 'rewrite_property_access' => $this->rewritePropertyAccess($source, $script),
                 'rewrite_global_variable' => $this->rewriteGlobalVariable($source, $script),
+                'annotation_to_attribute' => $this->annotationToAttribute($source, $script),
                 default => null,
             };
         } catch (\Throwable) {
@@ -213,5 +214,232 @@ class PharboristTransformer
         }
 
         return $modified ? $source : null;
+    }
+
+    /**
+     * Rewrite a Drupal-style docblock plugin annotation to a PHP 8 attribute.
+     *
+     * Script: {
+     *   "action": "annotation_to_attribute",
+     *   "annotation": "Block",
+     *   "attribute": "Block",
+     *   "attribute_import": "Drupal\\Core\\Block\\Attribute\\Block"
+     * }
+     */
+    private function annotationToAttribute(string $source, array $script): ?string
+    {
+        $annotation = ltrim((string) ($script['annotation'] ?? ''), '@');
+        $attributeImport = ltrim((string) ($script['attribute_import'] ?? ''), '\\');
+        $attribute = (string) ($script['attribute'] ?? '');
+
+        if ($annotation === '') {
+            return null;
+        }
+
+        if ($attribute === '' && $attributeImport !== '') {
+            $parts = explode('\\', $attributeImport);
+            $attribute = (string) end($parts);
+        }
+
+        if ($attribute === '') {
+            return null;
+        }
+
+        $annotationNeedle = '@' . $annotation;
+        $annotationPos = strpos($source, $annotationNeedle);
+        if ($annotationPos === false) {
+            return null;
+        }
+
+        $docblockStart = strrpos(substr($source, 0, $annotationPos), '/**');
+        $docblockEnd = strpos($source, '*/', $annotationPos);
+        if ($docblockStart === false || $docblockEnd === false || $docblockEnd < $annotationPos) {
+            return null;
+        }
+
+        $openParen = strpos($source, '(', $annotationPos + strlen($annotationNeedle));
+        if ($openParen === false || $openParen > $docblockEnd) {
+            return null;
+        }
+
+        $closeParen = $this->findBalancedClosingParenthesis($source, $openParen);
+        if ($closeParen === null || $closeParen > $docblockEnd) {
+            return null;
+        }
+
+        $annotationArguments = trim(substr($source, $openParen + 1, $closeParen - $openParen - 1));
+        $attributeArguments = $this->convertAnnotationArguments($annotationArguments);
+
+        $docblock = substr($source, $docblockStart, $docblockEnd + 2 - $docblockStart);
+        $updatedDocblock = $this->removeAnnotationFromDocblock($docblock, $annotation);
+
+        $attributeLine = '#[' . $attribute;
+        if ($attributeArguments !== '') {
+            $attributeLine .= '(' . $attributeArguments . ')';
+        }
+        $attributeLine .= ']';
+
+        $replacement = $updatedDocblock !== ''
+            ? $updatedDocblock . "\n" . $attributeLine
+            : $attributeLine;
+
+        $updatedSource = substr($source, 0, $docblockStart) . $replacement . substr($source, $docblockEnd + 2);
+        if ($attributeImport !== '') {
+            $updatedSource = $this->ensureUseImport($updatedSource, $attributeImport);
+        }
+
+        return $updatedSource !== $source ? $updatedSource : null;
+    }
+
+    private function findBalancedClosingParenthesis(string $source, int $openParen): ?int
+    {
+        $depth = 1;
+        $length = strlen($source);
+
+        for ($i = $openParen + 1; $i < $length; $i++) {
+            $char = $source[$i];
+            if ($char === '(') {
+                $depth++;
+                continue;
+            }
+
+            if ($char === ')') {
+                $depth--;
+                if ($depth === 0) {
+                    return $i;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private function convertAnnotationArguments(string $arguments): string
+    {
+        $normalized = preg_replace('/^\s*\*\s?/m', '', $arguments) ?? $arguments;
+        $normalized = preg_replace('/\s*=\s*/', ': ', $normalized) ?? $normalized;
+        $normalized = preg_replace('/,\s*$/m', ',', $normalized) ?? $normalized;
+        $normalized = preg_replace('/\n{2,}/', "\n", $normalized) ?? $normalized;
+
+        return trim($normalized);
+    }
+
+    private function removeAnnotationFromDocblock(string $docblock, string $annotation): string
+    {
+        $lines = preg_split('/\R/', $docblock);
+        if ($lines === false) {
+            return $docblock;
+        }
+
+        $startLine = null;
+        $endLine = null;
+        $depth = 0;
+
+        foreach ($lines as $index => $line) {
+            if ($startLine === null && str_contains($line, '@' . $annotation . '(')) {
+                $startLine = $index;
+                $depth = substr_count($line, '(') - substr_count($line, ')');
+                if ($depth <= 0) {
+                    $endLine = $index;
+                    break;
+                }
+                continue;
+            }
+
+            if ($startLine !== null) {
+                $depth += substr_count($line, '(') - substr_count($line, ')');
+                if ($depth <= 0) {
+                    $endLine = $index;
+                    break;
+                }
+            }
+        }
+
+        if ($startLine === null || $endLine === null) {
+            return $docblock;
+        }
+
+        array_splice($lines, $startLine, $endLine - $startLine + 1);
+        $lines = $this->normalizeDocblockLines($lines);
+
+        if (count($lines) <= 2) {
+            return '';
+        }
+
+        return implode("\n", $lines);
+    }
+
+    /**
+     * @param list<string> $lines
+     * @return list<string>
+     */
+    private function normalizeDocblockLines(array $lines): array
+    {
+        if (count($lines) <= 2) {
+            return $lines;
+        }
+
+        $first = array_shift($lines);
+        $last = array_pop($lines);
+
+        $body = [];
+        $previousBlank = true;
+
+        foreach ($lines as $line) {
+            $trimmed = trim($line);
+            $isBlank = $trimmed === '' || $trimmed === '*';
+            if ($isBlank) {
+                if ($previousBlank) {
+                    continue;
+                }
+                $body[] = ' *';
+                $previousBlank = true;
+                continue;
+            }
+
+            $body[] = rtrim($line);
+            $previousBlank = false;
+        }
+
+        while ($body !== [] && (trim((string) $body[0]) === '' || trim((string) $body[0]) === '*')) {
+            array_shift($body);
+        }
+
+        while ($body !== [] && (trim((string) end($body)) === '' || trim((string) end($body)) === '*')) {
+            array_pop($body);
+        }
+
+        if ($body === []) {
+            return [$first, $last];
+        }
+
+        return array_merge([$first], $body, [$last]);
+    }
+
+    private function ensureUseImport(string $source, string $import): string
+    {
+        $useStatement = 'use ' . $import . ';';
+        if (str_contains($source, $useStatement)) {
+            return $source;
+        }
+
+        if (preg_match_all('/^use\s+[^;]+;\s*$/m', $source, $matches, PREG_OFFSET_CAPTURE) === 1 && !empty($matches[0])) {
+            $lastUse = end($matches[0]);
+            if ($lastUse !== false) {
+                $insertAt = $lastUse[1] + strlen($lastUse[0]);
+                return substr($source, 0, $insertAt) . "\n" . $useStatement . substr($source, $insertAt);
+            }
+        }
+
+        if (preg_match('/^namespace\s+[^;]+;\s*$/m', $source, $match, PREG_OFFSET_CAPTURE) === 1) {
+            $insertAt = $match[0][1] + strlen($match[0][0]);
+            return substr($source, 0, $insertAt) . "\n\n" . $useStatement . substr($source, $insertAt);
+        }
+
+        if (str_starts_with($source, "<?php\n")) {
+            return "<?php\n\n" . $useStatement . substr($source, strlen("<?php"));
+        }
+
+        return $useStatement . "\n" . $source;
     }
 }

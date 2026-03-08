@@ -10,11 +10,13 @@ use Symfony\Component\Console\Output\OutputInterface;
 class TemplateApplier
 {
     private FixTemplate $fixTemplate;
+    private PharboristTransformer $pharboristTransformer;
 
     public function __construct(
         private DatabaseApi $api,
     ) {
         $this->fixTemplate = new FixTemplate();
+        $this->pharboristTransformer = new PharboristTransformer();
     }
 
     #[\NoDiscard]
@@ -114,7 +116,35 @@ class TemplateApplier
             foreach ($fileMatches as $match) {
                 $matchId = (int) $match['id'];
                 $matchedSource = (string) ($match['matched_source'] ?? '');
-                $fixed = $this->fixTemplate->apply($matchedSource, (string) $match['fix_template']);
+                $fixMethod = (string) ($match['fix_method'] ?? 'template');
+                $diffBase = $matchedSource;
+
+                if ($fixMethod === 'pharborist') {
+                    if ($this->isOverlappingReservedRange($match, $reservedRanges)) {
+                        $stats['failed']++;
+                        $stats['conflicts']++;
+                        if (!$dryRun) {
+                            $matchRepo->updateStatus($matchId, 'failed');
+                        }
+                        $output?->writeln(
+                            sprintf(
+                                '<comment>Skipped overlapping match in %s at line %d</comment>',
+                                $relPath,
+                                (int) ($match['line_start'] ?? 0)
+                            )
+                        );
+                        continue;
+                    }
+
+                    $diffBase = $modified;
+                    $script = json_decode((string) ($match['fix_template'] ?? ''), true);
+                    $fixed = is_array($script)
+                        ? $this->pharboristTransformer->transform($modified, $script)
+                        : null;
+                } else {
+                    $fixed = $this->fixTemplate->apply($matchedSource, (string) $match['fix_template']);
+                }
+
                 if ($fixed === null) {
                     $stats['failed']++;
                     if (!$dryRun) {
@@ -123,7 +153,7 @@ class TemplateApplier
                     continue;
                 }
 
-                if ($fixed === $matchedSource) {
+                if ($fixed === $diffBase) {
                     $stats['skipped']++;
                     if (!$dryRun) {
                         $matchRepo->updateStatus($matchId, 'skipped');
@@ -131,7 +161,7 @@ class TemplateApplier
                     continue;
                 }
 
-                if ($this->isOverlappingReservedRange($match, $reservedRanges)) {
+                if ($fixMethod !== 'pharborist' && $this->isOverlappingReservedRange($match, $reservedRanges)) {
                     $stats['failed']++;
                     $stats['conflicts']++;
                     if (!$dryRun) {
@@ -148,8 +178,10 @@ class TemplateApplier
                 }
 
                 if ($dryRun || $interactive) {
-                    $diffBase = $this->sliceFromOffsets($modified, $match) ?? $matchedSource;
-                    $diff = $diffGenerator->generate($diffBase, $fixed, $relPath, (int) ($match['line_start'] ?? 0));
+                    $previewBase = $fixMethod === 'pharborist'
+                        ? $diffBase
+                        : ($this->sliceFromOffsets($modified, $match) ?? $matchedSource);
+                    $diff = $diffGenerator->generate($previewBase, $fixed, $relPath, (int) ($match['line_start'] ?? 0));
                     $output?->writeln($diff);
                 }
 
@@ -164,6 +196,14 @@ class TemplateApplier
                 }
 
                 if (!$dryRun) {
+                    if ($fixMethod === 'pharborist') {
+                        $modified = $fixed;
+                        $appliedMatchIds[] = $matchId;
+                        $stats['applied']++;
+                        $this->reserveWholeFile($reservedRanges, strlen($modified));
+                        continue;
+                    }
+
                     // Preferred path: apply at scanner-provided byte offsets.
                     $updated = $this->applyAtOffsets($modified, $match, $fixed, $matchedSource);
                     if ($updated !== null) {
@@ -200,7 +240,11 @@ class TemplateApplier
                     $stats['failed']++;
                 } else {
                     $stats['would_apply']++;
-                    $this->reserveRange($match, $reservedRanges);
+                    if ($fixMethod === 'pharborist') {
+                        $this->reserveWholeFile($reservedRanges, strlen($fixed));
+                    } else {
+                        $this->reserveRange($match, $reservedRanges);
+                    }
                 }
             }
 
@@ -285,8 +329,19 @@ class TemplateApplier
         $reservedRanges[] = ['start' => $start, 'end' => $end];
     }
 
+    private function reserveWholeFile(array &$reservedRanges, int $byteLength): void
+    {
+        $reservedRanges[] = ['start' => 0, 'end' => max($byteLength, 1), 'full_file' => true];
+    }
+
     private function isOverlappingReservedRange(array $match, array $reservedRanges): bool
     {
+        foreach ($reservedRanges as $range) {
+            if (($range['full_file'] ?? false) === true) {
+                return true;
+            }
+        }
+
         if (!isset($match['byte_start'], $match['byte_end'])) {
             return false;
         }

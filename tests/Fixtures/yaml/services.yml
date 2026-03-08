@@ -1,0 +1,6 @@
+services:
+  my_module.example:
+    class: Drupal\my_module\Example
+    arguments: ['@database', '@config.factory']
+    tags:
+      - { name: event_subscriber }

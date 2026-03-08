@@ -1,0 +1,66 @@
+{% extends "layout.twig" %}
+
+{% block content %}
+    <nav class="breadcrumb">
+        <a href="/versions">Versions</a> &raquo; <a href="/versions/{{ version.id }}">{{ version.tag }}</a> &raquo; <span>Compare</span>
+    </nav>
+
+    <section class="hero hero-compact">
+        <div>
+            <p class="eyebrow">Upgrade Impact Analysis</p>
+            <h1>{{ compareWith.tag }} &raquo; {{ version.tag }}</h1>
+        </div>
+    </section>
+
+    <div class="grid">
+        <section class="panel">
+            <div class="panel-head">
+                <h2>Extension Upgrade Hotspots</h2>
+            </div>
+            <p class="muted">Extensions ranked by the number of breaking changes in their core dependencies.</p>
+
+            {% if impactGraph %}
+                <table class="table">
+                    <thead>
+                    <tr>
+                        <th>Extension</th>
+                        <th>Type</th>
+                        <th class="text-right">Direct Changes</th>
+                        <th class="text-right">Dependency Impact</th>
+                        <th>Top Culprits</th>
+                    </tr>
+                    </thead>
+                    <tbody>
+                    {% for item in impactGraph %}
+                        <tr class="{{ item.dependency_impact > 10 ? 'impact-high' : '' }}">
+                            <td>
+                                <strong>{{ item.label }}</strong><br>
+                                <code class="small">{{ item.machine_name }}</code>
+                            </td>
+                            <td><span class="pill">{{ item.type }}</span></td>
+                            <td class="text-right">{{ item.direct_changes }}</td>
+                            <td class="text-right">
+                                <strong class="{{ item.dependency_impact > 0 ? 'severity-breaking' : '' }}">
+                                    {{ item.dependency_impact }}
+                                </strong>
+                            </td>
+                            <td>
+                                {% for detail in item.impact_details|slice(0, 3) %}
+                                    <span class="badge small" title="{{ detail.count }} breaking changes in this dependency">
+                                        {{ detail.extension }} ({{ detail.count }})
+                                    </span>
+                                {% endfor %}
+                                {% if item.impact_details|length > 3 %}
+                                    <span class="muted small">+{{ item.impact_details|length - 3 }} more</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            {% else %}
+                <p class="empty">No impact data found for this version pair.</p>
+            {% endif %}
+        </section>
+    </div>
+{% endblock %}
