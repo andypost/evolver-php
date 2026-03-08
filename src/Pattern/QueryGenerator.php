@@ -73,6 +73,10 @@ class QueryGenerator
             return $this->propertyAccess($name);
         }
 
+        if (in_array($changeType, ['sdc_include_removed', 'sdc_embed_removed', 'sdc_call_removed', 'sdc_function_removed'], true)) {
+            return $this->twigReference($name);
+        }
+
         if ($changeType === 'function_call_rewrite') {
             return $this->functionCall($name);
         }
@@ -196,9 +200,20 @@ class QueryGenerator
             'route', 'permission', 'config_schema', 'library',
             'module_info', 'theme_info', 'profile_info', 'theme_engine_info',
             'link_menu', 'link_task', 'link_action', 'link_contextual',
-            'breakpoint', 'config_export', 'recipe_manifest' => $this->stringReference($name),
+            'breakpoint', 'config_export', 'recipe_manifest', 'sdc_component' => $this->stringReference($name),
+            'sdc_include', 'sdc_embed', 'sdc_call', 'sdc_function',
+            'twig_include', 'twig_embed', 'twig_extends', 'twig_component' => $this->twigReference($name),
             default => null,
         };
+    }
+
+    private function twigReference(string $name): string
+    {
+        $literal = $this->escapeLiteral($name);
+        return "[
+            (tag_statement) 
+            (output_directive)
+        ] @item";
     }
 
     /**

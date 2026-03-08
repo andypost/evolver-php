@@ -8,9 +8,16 @@
     "repositories": [
         {
             "type": "vcs",
-            "url": "https://github.com/andypost/pharborist"
+            "url": "https://github.com/andypost/pharborist",
+            "no-api": true
         }
     ],
+    "config": {
+        "optimize-autoloader": true,
+        "sort-packages": true,
+        "prefer-dist": true,
+        "shallow-clone": true
+    },
     "require": {
         "amphp/http-server": "^3.4",
         "amphp/http-server-form-parser": "^2.2",

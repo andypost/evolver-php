@@ -5,6 +5,7 @@
         <div>
             <p class="eyebrow">Run Comparison</p>
             <h1>{{ project.name }}</h1>
+            <p class="muted">Compare two scan results for the same project. This compares findings between runs, not project branches directly.</p>
         </div>
         <a class="button" href="/projects/{{ project.id }}">Back to project</a>
     </section>
@@ -15,7 +16,7 @@
         </div>
         <form class="form form-inline" action="/projects/{{ project.id }}/compare" method="get">
             <label>
-                <span>Base run</span>
+                <span>Baseline run</span>
                 <select name="base_run" required>
                     <option value="">Choose…</option>
                     {% for run in runs %}
@@ -25,7 +26,7 @@
             </label>
 
             <label>
-                <span>Head run</span>
+                <span>Compared run</span>
                 <select name="head_run" required>
                     <option value="">Choose…</option>
                     {% for run in runs %}

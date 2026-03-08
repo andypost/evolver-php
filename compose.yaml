@@ -11,7 +11,7 @@ services:
     working_dir: /app
     volumes:
       - .:/app
-      - ./.cache/composer:/home/evolver/.composer/cache
+      - ./.cache/composer:/home/evolver/.composer/cache:cached
       - ../drupal:/mnt/drupal:ro
     ports:
       - 127.0.0.1:8080:8080

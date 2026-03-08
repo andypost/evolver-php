@@ -10,7 +10,7 @@ use Symfony\Component\Yaml\Yaml;
 
 final class DrupalYamlSemanticExtractor
 {
-    public function extract(string $source, string $filePath): ?array
+    public function extract(string $source, string $filePath, ?string $absolutePath = null): ?array
     {
         if (!$this->supports($filePath)) {
             return null;
@@ -32,6 +32,9 @@ final class DrupalYamlSemanticExtractor
             'module_info', 'theme_info', 'profile_info', 'theme_engine_info' => [
                 $this->buildInfoSymbol($symbolType, $data, $source, $filePath),
             ],
+            'sdc_component' => [
+                $this->buildSdcComponentSymbol($data, $source, $absolutePath ?? $filePath),
+            ],
             'link_menu', 'link_task', 'link_action', 'link_contextual' => $this->buildLinkSymbols($symbolType, $data, $source),
             'config_export' => [
                 $this->buildConfigExportSymbol($data, $source, $filePath),
@@ -41,6 +44,32 @@ final class DrupalYamlSemanticExtractor
             ],
             default => null,
         };
+    }
+
+    /**
+     * @param array<string, mixed> $data
+     * @return array<string, mixed>
+     */
+    private function buildSdcComponentSymbol(array $data, string $source, string $filePath): array
+    {
+        $componentId = basename($filePath, '.component.yml');
+        $directory = dirname($filePath);
+        $normalized = $this->normalizeValue($data);
+
+        $metadata = [
+            'file_kind' => 'sdc_component',
+            'label' => $this->stringOrNull($data['name'] ?? null),
+            'description' => $this->stringOrNull($data['description'] ?? null),
+            'status' => $this->stringOrNull($data['status'] ?? 'stable'),
+            'has_twig' => file_exists($directory . '/' . $componentId . '.twig'),
+            'has_css' => file_exists($directory . '/' . $componentId . '.css'),
+            'has_js' => file_exists($directory . '/' . $componentId . '.js'),
+            'props' => array_keys($data['props'] ?? []),
+            'slots' => array_keys($data['slots'] ?? []),
+            'library' => $data['library'] ?? null,
+        ];
+
+        return $this->buildSymbol('sdc_component', $componentId, $source, $normalized, $metadata);
     }
 
     private function supports(string $filePath): bool
@@ -57,6 +86,10 @@ final class DrupalYamlSemanticExtractor
         }
 
         if ($basename === 'recipe.yml') {
+            return true;
+        }
+
+        if (str_ends_with($basename, '.component.yml')) {
             return true;
         }
 
@@ -78,6 +111,10 @@ final class DrupalYamlSemanticExtractor
                 'theme_engine' => 'theme_engine_info',
                 default => 'module_info',
             };
+        }
+
+        if (str_ends_with($basename, '.component.yml')) {
+            return 'sdc_component';
         }
 
         if (preg_match('/\.links\.(menu|task|action|contextual)\.yml$/', $basename, $matches)) {

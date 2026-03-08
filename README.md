@@ -89,6 +89,38 @@ Evolver uses a single-container architecture for simplicity. Both the **Web Serv
 - **Worker:** Processes background tasks like indexing and scanning using `pcntl_fork` for multi-core parallelism.
 - **FFI Preload:** The Docker image uses PHP 8.5 with FFI Preload enabled for maximum Tree-sitter performance.
 
+## Dependencies
+
+### Pharborist
+
+[Pharborist](https://github.com/andypost/pharborist) is a PHP AST library used for complex code transformations.
+
+**Why a fork?** The original Pharborist is not actively maintained and doesn't support PHP 8.5+. This project uses a fork with PHP 8.5 compatibility.
+
+**Installed via Composer from GitHub:**
+```json
+{
+  "repositories": [
+    {
+      "type": "vcs",
+      "url": "https://github.com/andypost/pharborist",
+      "no-api": true
+    }
+  ],
+  "require": {
+    "pharborist/pharborist": "dev-php85"
+  }
+}
+```
+
+**Usage:**
+- `src/Applier/PharboristTransformer.php` — AST-based transformations
+- Function call → method chain conversion
+- Global variable → service conversion
+
+**Local Testing:**
+The `pharborist/` directory may exist for local development but is not required. Composer installs from GitHub.
+
 ## License
 
 GPL-2.0-or-later

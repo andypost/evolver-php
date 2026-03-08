@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "a0fec31e5e7910b7908b26f2ffd59724",
+    "content-hash": "c6d6300a9116528c6561578c471261eb",
     "packages": [
         {
             "name": "amphp/amp",
@@ -1852,7 +1852,7 @@
             "version": "dev-php85",
             "source": {
                 "type": "git",
-                "url": "https://github.com/andypost/pharborist.git",
+                "url": "https://github.com/andypost/pharborist",
                 "reference": "1d027620b702d00984e01bfea7ca74a0f3ece195"
             },
             "dist": {
@@ -1893,9 +1893,6 @@
                 "standards",
                 "syntax"
             ],
-            "support": {
-                "source": "https://github.com/andypost/pharborist/tree/php85"
-            },
             "time": "2026-03-07T21:05:49+00:00"
         },
         {

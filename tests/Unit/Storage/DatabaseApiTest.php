@@ -483,6 +483,31 @@ class DatabaseApiTest extends TestCase
         $this->assertSame('core/modules/block/src/BlockRepository.php', $results[0]['resolved_class_file_path']);
     }
 
+    public function testSearchSemanticYamlSymbolsFindsDrupalLibraryByAssetPath(): void
+    {
+        $versionId = $this->api->versions()->create('10.2.0', 10, 2, 0);
+        $fileId = $this->api->files()->create($versionId, 'core/modules/block/block.libraries.yml', 'drupal_libraries', 'h_lib', null, null, 10, 100);
+
+        $this->createSymbol([
+            'version_id' => $versionId,
+            'file_id' => $fileId,
+            'language' => 'drupal_libraries',
+            'symbol_type' => 'drupal_library',
+            'fqn' => 'drupal.block.admin',
+            'name' => 'drupal.block.admin',
+            'signature_hash' => 'yaml_hash_lib_1',
+            'signature_json' => '{"dependencies":["core/drupal","core/once"],"js":{"js/block.admin.js":{}},"css":{"theme":{"css/block.admin.css":{}}}}',
+            'metadata_json' => '{"owner":"block","asset_paths":["core/modules/block/css/block.admin.css","core/modules/block/js/block.admin.js"],"javascript_assets":["core/modules/block/js/block.admin.js"],"css_assets":["core/modules/block/css/block.admin.css"],"dependency_libraries":["core/drupal","core/once"],"dependency_owners":["core"]}',
+        ]);
+
+        $results = $this->api->searchSemanticYamlSymbols($versionId, 'core/modules/block/js/block.admin.js', ['drupal_library']);
+
+        $this->assertCount(1, $results);
+        $this->assertSame('drupal_library', $results[0]['symbol_type']);
+        $this->assertSame('drupal.block.admin', $results[0]['fqn']);
+        $this->assertSame('core/modules/block/block.libraries.yml', $results[0]['file_path']);
+    }
+
     public function testFindSemanticLinksForServiceSymbol(): void
     {
         $versionId = $this->api->versions()->create('10.2.0', 10, 2, 0);
@@ -553,6 +578,88 @@ class DatabaseApiTest extends TestCase
         $this->assertSame('registered_service', $links[0]['relationship']);
         $this->assertSame('block.repository', $links[0]['symbol']['fqn']);
         $this->assertSame('core/modules/block/block.services.yml', $links[0]['symbol']['file_path']);
+    }
+
+    public function testFindSemanticLinksForDrupalLibrarySymbol(): void
+    {
+        $versionId = $this->api->versions()->create('10.2.0', 10, 2, 0);
+        $libraryFileId = $this->api->files()->create($versionId, 'core/modules/block/block.libraries.yml', 'drupal_libraries', 'h_lib_2', null, null, 10, 100);
+        $jsFileId = $this->api->files()->create($versionId, 'core/modules/block/js/block.admin.js', 'javascript', 'h_js_1', null, null, 10, 100);
+        $cssFileId = $this->api->files()->create($versionId, 'core/modules/block/css/block.admin.css', 'css', 'h_css_1', null, null, 10, 100);
+
+        $libraryId = $this->createSymbol([
+            'version_id' => $versionId,
+            'file_id' => $libraryFileId,
+            'language' => 'drupal_libraries',
+            'symbol_type' => 'drupal_library',
+            'fqn' => 'drupal.block.admin',
+            'name' => 'drupal.block.admin',
+            'signature_hash' => 'yaml_hash_lib_2',
+            'metadata_json' => '{"asset_paths":["core/modules/block/css/block.admin.css","core/modules/block/js/block.admin.js"],"javascript_assets":["core/modules/block/js/block.admin.js"],"css_assets":["core/modules/block/css/block.admin.css"]}',
+        ]);
+
+        $this->createSymbol([
+            'version_id' => $versionId,
+            'file_id' => $jsFileId,
+            'language' => 'javascript',
+            'symbol_type' => 'function',
+            'fqn' => 'announceBlockUpdate',
+            'name' => 'announceBlockUpdate',
+            'signature_hash' => 'js_hash_1',
+        ]);
+
+        $this->createSymbol([
+            'version_id' => $versionId,
+            'file_id' => $cssFileId,
+            'language' => 'css',
+            'symbol_type' => 'css_selector',
+            'fqn' => '.block-admin',
+            'name' => '.block-admin',
+            'signature_hash' => 'css_hash_1',
+        ]);
+
+        $links = $this->api->findSemanticLinksForSymbol($libraryId);
+
+        $this->assertCount(2, $links);
+        $this->assertSame('css_asset_symbol', $links[0]['relationship']);
+        $this->assertSame('core/modules/block/css/block.admin.css', $links[0]['symbol']['file_path']);
+        $this->assertSame('javascript_asset_symbol', $links[1]['relationship']);
+        $this->assertSame('core/modules/block/js/block.admin.js', $links[1]['symbol']['file_path']);
+    }
+
+    public function testFindSemanticLinksForAssetSymbolReturnsOwningLibrary(): void
+    {
+        $versionId = $this->api->versions()->create('10.2.0', 10, 2, 0);
+        $libraryFileId = $this->api->files()->create($versionId, 'core/modules/block/block.libraries.yml', 'drupal_libraries', 'h_lib_3', null, null, 10, 100);
+        $jsFileId = $this->api->files()->create($versionId, 'core/modules/block/js/block.admin.js', 'javascript', 'h_js_2', null, null, 10, 100);
+
+        $this->createSymbol([
+            'version_id' => $versionId,
+            'file_id' => $libraryFileId,
+            'language' => 'drupal_libraries',
+            'symbol_type' => 'drupal_library',
+            'fqn' => 'drupal.block.admin',
+            'name' => 'drupal.block.admin',
+            'signature_hash' => 'yaml_hash_lib_3',
+            'metadata_json' => '{"asset_paths":["core/modules/block/js/block.admin.js"]}',
+        ]);
+
+        $assetSymbolId = $this->createSymbol([
+            'version_id' => $versionId,
+            'file_id' => $jsFileId,
+            'language' => 'javascript',
+            'symbol_type' => 'function',
+            'fqn' => 'announceBlockUpdate',
+            'name' => 'announceBlockUpdate',
+            'signature_hash' => 'js_hash_2',
+        ]);
+
+        $links = $this->api->findSemanticLinksForSymbol($assetSymbolId);
+
+        $this->assertCount(1, $links);
+        $this->assertSame('declared_by_library', $links[0]['relationship']);
+        $this->assertSame('drupal.block.admin', $links[0]['symbol']['fqn']);
+        $this->assertSame('core/modules/block/block.libraries.yml', $links[0]['symbol']['file_path']);
     }
 
     public function testSearchSemanticYamlSymbolsFindsExportedConfigDependencies(): void

@@ -18,7 +18,7 @@ final class RunComparisonServiceTest extends TestCase
         $baseRunId = $api->scanRuns()->create($projectId, 'main', 'base-sha', '/tmp/base', '10.2.0', '10.3.0', 'completed');
         $headRunId = $api->scanRuns()->create($projectId, 'main', 'head-sha', '/tmp/head', '10.2.0', '10.3.0', 'completed');
 
-        (void) $api->matches()->save([
+        $_ = $api->matches()->save([
             'scan_run_id' => $baseRunId,
             'change_id' => $changeIds['persisting'],
             'file_path' => 'src/A.php',
@@ -26,7 +26,7 @@ final class RunComparisonServiceTest extends TestCase
             'matched_source' => 'persisting_old()',
             'fix_method' => 'template',
         ]);
-        (void) $api->matches()->save([
+        $_ = $api->matches()->save([
             'scan_run_id' => $baseRunId,
             'change_id' => $changeIds['resolved'],
             'file_path' => 'src/B.php',
@@ -34,7 +34,7 @@ final class RunComparisonServiceTest extends TestCase
             'matched_source' => 'resolved_old()',
             'fix_method' => 'manual',
         ]);
-        (void) $api->matches()->save([
+        $_ = $api->matches()->save([
             'scan_run_id' => $headRunId,
             'change_id' => $changeIds['persisting'],
             'file_path' => 'src/A.php',
@@ -42,7 +42,7 @@ final class RunComparisonServiceTest extends TestCase
             'matched_source' => 'persisting_old()',
             'fix_method' => 'template',
         ]);
-        (void) $api->matches()->save([
+        $_ = $api->matches()->save([
             'scan_run_id' => $headRunId,
             'change_id' => $changeIds['introduced'],
             'file_path' => 'src/C.php',
@@ -81,7 +81,7 @@ final class RunComparisonServiceTest extends TestCase
         $this->expectException(\InvalidArgumentException::class);
         $this->expectExceptionMessage('same upgrade path');
 
-        (void) (new RunComparisonService($api))->compare($baseRunId, $headRunId);
+        $_ = (new RunComparisonService($api))->compare($baseRunId, $headRunId);
     }
 
     /**

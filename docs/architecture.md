@@ -104,7 +104,8 @@ Parses Drupal core files and extracts symbols.
 | `FileClassifier` | Maps file extensions to languages. `.php/.module/.inc/.install/.profile/.theme/.engine` → php, `.yml/.yaml` → yaml. |
 | `CoreIndexer` | Orchestrates indexing. Walks directory, classifies files, parses each with tree-sitter, extracts symbols, stores in DB. Shows progress bar. Re-indexing is path-aware: unchanged files are skipped, changed files replace prior symbol rows for that path. |
 | `PHPExtractor` | Walks PHP AST. Extracts: function_definition, class_declaration, interface_declaration, trait_declaration, method_declaration, const_declaration. Parses `@trigger_error` calls and `@deprecated` docblocks for deprecation metadata. Computes signature hashes. |
-| `YAMLExtractor` | Walks YAML AST. Extracts: module/theme metadata from `*.info.yml`, services from `*.services.yml`, routes from `*.routing.yml`, permissions from `*.permissions.yml`, libraries from `*.libraries.yml`, config schema from `*.schema.yml`, breakpoints from `*.breakpoints.yml`, and UI links. |
+| `YAMLExtractor` | Walks YAML AST. Extracts: module/theme metadata from `*.info.yml`, services from `*.services.yml`, routes from `*.routing.yml`, permissions from `*.permissions.yml`, config schema from `*.schema.yml`, breakpoints from `*.breakpoints.yml`, and UI links. |
+| `DrupalLibrariesExtractor` | Uses tree-sitter ranges plus normalized YAML semantics for `*.libraries.yml`. Stores library dependencies, resolved JS/CSS asset paths, and deprecation metadata so library symbols can link to indexed asset files. |
 
 **Indexing flow:**
 
@@ -135,8 +136,8 @@ The indexing process creates a "Knowledge Graph" of the Drupal codebase by linki
 | `route` (YAML) | `method` (PHP) | Points to the controller or form handler |
 | `module_info` (YAML) | `module_info` (YAML) | Tracks dependencies between modules |
 | `theme_info` (YAML) | `theme_info` (YAML) | Tracks `base theme` inheritance |
-| `theme_info` (YAML) | `library` (YAML) | Tracks `libraries-override` and `libraries-extend` |
-| `library` (YAML) | File Path (JS/CSS) | Links UI assets to module/theme definitions |
+| `theme_info` (YAML) | `drupal_library` (YAML) | Tracks `libraries-override` and `libraries-extend` |
+| `drupal_library` (YAML) | `javascript` / `css_selector` symbols | Links UI assets to module/theme definitions via resolved asset paths |
 | `hook` (PHP Attribute) | Hook Name | Links implementation to Drupal's hook system |
 | `link_menu` (YAML) | `route` (YAML) | Links navigation items to routes |
 | `breakpoint` (YAML) | — | Defines responsive design points |
@@ -152,6 +153,7 @@ The indexer specifically monitors `*.libraries.yml` for architectural changes:
 - **Direct Deprecation:** Extracts messages from the `deprecated` key within library definitions.
 - **File Moves:** Detects and flags libraries using the `moved_files` key as deprecated, extracting the target migration links.
 - **Metadata Extraction:** Automatically parses `deprecation_version` and `removal_version` from the YAML values to provide precise upgrade timing.
+- **Asset Relations:** Resolves internal JS/CSS paths relative to the `*.libraries.yml` file, stores them in library metadata, and links them back to indexed `javascript` and `css` symbols in the UI and semantic search flow.
 
 ### Analyzing Breaking Changes
 
@@ -218,9 +220,9 @@ Provides the local control plane for managed branch scans.
 |-------|---------------|
 | `WebServer` | Amp HTTP server with Twig-rendered pages and SSE endpoints for live job updates. |
 | `ManagedProjectService` | Registers managed Git projects and persists tracked branches. |
-| `GitProjectManager` | Materializes a project branch as a local path or refreshed git worktree. |
+| `GitProjectManager` | For managed `git_remote` projects, keeps a shared cached repo under `.cache/projects/<slug>/repo` by default and materializes ephemeral run sources under `.cache/projects/<slug>/runs/<run-id>/source`. Branch detection uses a temporary `/tmp/evolver_remote_detect_*` probe, and existing stored project paths remain valid. |
 | `JobQueue` | Persists queue jobs, progress, and log events in SQLite. |
-| `ScanRunService` | Queues branch scans, resolves source trees, executes scans, and finalizes run/job state. |
+| `ScanRunService` | Queues branch scans, resolves source trees, executes scans, and cleans per-run remote materializations after completion. |
 | `RunComparisonService` | Compares two completed runs for the same project and upgrade path. |
 
 ### Applier Layer (`src/Applier/`)
@@ -283,5 +285,6 @@ The Dockerfile uses `alpine:edge` which provides pre-built packages:
 - `tree-sitter` (libtree-sitter.so)
 - `tree-sitter-php` (PHP grammar `.so`)
 - `tree-sitter-yaml` (YAML grammar `.so`)
+- `tree-sitter-twig` (Twig grammar `.so`, built from source)
 
 Grammar `.so` files are loaded directly from system library paths (for example `/usr/lib`). No repo-local grammar checkout is required.

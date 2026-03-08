@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace DrupalEvolver\Scanner;
 
+use DrupalEvolver\Adapter\DrupalCoreAdapter;
 use DrupalEvolver\Indexer\FileClassifier;
 use DrupalEvolver\Storage\Database;
 use DrupalEvolver\Storage\DatabaseApi;
@@ -16,6 +17,7 @@ use Symfony\Component\Console\Output\OutputInterface;
 final class ProjectScanner
 {
     private FileClassifier $classifier;
+    private ProjectTypeDetector $typeDetector;
     private int $workerCount = 1;
 
     public function __construct(
@@ -23,7 +25,8 @@ final class ProjectScanner
         private DatabaseApi $api,
         private MatchCollector $matchCollector,
     ) {
-        $this->classifier = new FileClassifier();
+        $this->classifier = new FileClassifier(new DrupalCoreAdapter());
+        $this->typeDetector = new ProjectTypeDetector();
         $this->workerCount = $this->api->getPath() === ':memory:' ? 1 : $this->detectCpuCount();
     }
 
@@ -46,7 +49,7 @@ final class ProjectScanner
         $scanRunId = $this->api->scanRuns()->create($projectId, $projectName, null, $path, $fromVersion, $targetVersion);
 
         try {
-            (void) $this->scanIntoProject($projectId, $scanRunId, $path, $targetVersion, $fromVersion, $output, $onProgress);
+            $_ = $this->scanIntoProject($projectId, $scanRunId, $path, $targetVersion, $fromVersion, $output, $onProgress);
         } catch (\Throwable $e) {
             $this->api->scanRuns()->markFailed($scanRunId, $e->getMessage());
             throw $e;
@@ -80,10 +83,28 @@ final class ProjectScanner
             throw new \InvalidArgumentException('Could not detect current version. Use --from to specify.');
         }
 
+        if (!$this->api->versions()->findByTag($fromVersion)) {
+            $closest = $this->api->versions()->findClosest($fromVersion);
+            if ($closest) {
+                $output?->writeln(sprintf("<comment>Warning: Detected core version %s is not indexed. Using closest available version: %s</comment>", $fromVersion, $closest['tag']));
+                $fromVersion = $closest['tag'];
+            }
+        }
+
         $fromVer = $this->api->versions()->findByTag($fromVersion);
         $toVer = $this->api->versions()->findByTag($targetVersion);
         if (!$fromVer || !$toVer) {
             throw new \InvalidArgumentException('Both versions must be indexed first');
+        }
+
+        // Auto-detect and update project type if not set
+        $project = $this->api->projects()->findById($projectId);
+        if ($project !== null && ($project['type'] ?? null) === null) {
+            $detectedType = $this->typeDetector->detect($path);
+            if ($detectedType !== null) {
+                $this->api->projects()->updateType($projectId, $detectedType);
+                $output?->writeln("Detected project type: <info>{$detectedType}</info>");
+            }
         }
 
         if ($this->versionWeight($fromVer) > $this->versionWeight($toVer)) {
@@ -400,14 +421,22 @@ final class ProjectScanner
         $iterator = new \RecursiveIteratorIterator($filter, \RecursiveIteratorIterator::SELF_FIRST);
 
         foreach ($iterator as $file) {
-            $language = $this->classifier->classify($file->getPathname());
+            $pathname = $file->getPathname();
+            $relativePath = substr($pathname, strlen($path) + 1);
+
+            // Skip core and vendor folders within the project to avoid false positives from core itself
+            if (str_starts_with($relativePath, 'core/') || str_starts_with($relativePath, 'vendor/')) {
+                continue;
+            }
+
+            $language = $this->classifier->classify($pathname);
             if (!$file->isFile() || $language === null) {
                 continue;
             }
 
             $files[] = [
-                'path' => $file->getPathname(),
-                'relative_path' => substr($file->getPathname(), strlen($path) + 1),
+                'path' => $pathname,
+                'relative_path' => $relativePath,
                 'language' => $language,
             ];
         }

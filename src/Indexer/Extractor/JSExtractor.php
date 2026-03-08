@@ -14,7 +14,7 @@ class JSExtractor implements ExtractorInterface
 
     public function __construct(private LanguageRegistry $registry) {}
 
-    public function extract(Node $root, string $source, string $filePath): array
+    public function extract(Node $root, string $source, string $filePath, ?string $absolutePath = null): array
     {
         $symbols = [];
         $query = $this->getQuery($root);

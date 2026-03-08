@@ -54,7 +54,7 @@ class DatabaseTest extends TestCase
         $this->db->pdo()->exec('CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT)');
 
         try {
-            (void) $this->db->transaction(function (Database $db) {
+            $_ = $this->db->transaction(function (Database $db) {
                 $affected = $db->execute('INSERT INTO test (name) VALUES (:name)', ['name' => 'fail']);
                 $this->assertSame(1, $affected);
                 throw new \RuntimeException('oops');

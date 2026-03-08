@@ -4,8 +4,8 @@ declare(strict_types=1);
 
 namespace DrupalEvolver\Tests\Unit\Indexer;
 
+use DrupalEvolver\Adapter\DrupalCoreAdapter;
 use DrupalEvolver\Indexer\Extractor\PHPExtractor;
-use DrupalEvolver\TreeSitter\Node;
 use PHPUnit\Framework\TestCase;
 
 /**
@@ -18,7 +18,9 @@ class PHPExtractorTest extends TestCase
 {
     public function testExtractorInstantiation(): void
     {
-        $extractor = new PHPExtractor();
+        $registry = $this->createMock(\DrupalEvolver\TreeSitter\LanguageRegistry::class);
+        $adapter = new DrupalCoreAdapter();
+        $extractor = new PHPExtractor($registry, $adapter);
         $this->assertInstanceOf(PHPExtractor::class, $extractor);
     }
 }

@@ -14,6 +14,7 @@ The parser stack is prepared automatically in Docker:
 3. Grammar libraries are installed at:
    - `/usr/lib/libtree-sitter-php.so`
    - `/usr/lib/libtree-sitter-yaml.so`
+   - `/usr/lib/libtree-sitter-twig.so`
 4. `EVOLVER_GRAMMAR_PATH` defaults to `/usr/lib` in `compose.yaml`.
 5. Runtime library resolution falls back safely across common names/paths.
 

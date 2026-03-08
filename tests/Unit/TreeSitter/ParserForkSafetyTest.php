@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace DrupalEvolver\Tests\Unit\TreeSitter;
 
+use DrupalEvolver\Adapter\DrupalCoreAdapter;
 use DrupalEvolver\Indexer\Extractor\PHPExtractor;
 use DrupalEvolver\TreeSitter\Parser;
 use PHPUnit\Framework\TestCase;
@@ -33,7 +34,7 @@ class ParserForkSafetyTest extends TestCase
         $this->requirePcntl();
 
         $parent = new Parser();
-        $parentExtractor = new PHPExtractor($parent->registry());
+        $parentExtractor = new PHPExtractor($parent->registry(), new DrupalCoreAdapter());
         $parentTree = $parent->parse(self::SOURCE, 'php');
         $this->assertCount(3, $parentExtractor->extract($parentTree->rootNode(), self::SOURCE, 'fixture.php'));
 
@@ -48,7 +49,7 @@ class ParserForkSafetyTest extends TestCase
             if ($pid === 0) {
                 try {
                     $parser = new Parser();
-                    $extractor = new PHPExtractor($parser->registry());
+                    $extractor = new PHPExtractor($parser->registry(), new DrupalCoreAdapter());
                     $tree = $parser->parse(self::SOURCE, 'php');
                     $count = count($extractor->extract($tree->rootNode(), self::SOURCE, 'fixture.php'));
                     file_put_contents($outputFile, (string) $count);
@@ -116,7 +117,7 @@ class ParserForkSafetyTest extends TestCase
         }
 
         $parent = new Parser();
-        $parentExtractor = new PHPExtractor($parent->registry());
+        $parentExtractor = new PHPExtractor($parent->registry(), new DrupalCoreAdapter());
         $parentTree = $parent->parse(self::SOURCE, 'php');
         $this->assertCount(3, $parentExtractor->extract($parentTree->rootNode(), self::SOURCE, 'fixture.php'));
         unset($parentTree);
@@ -128,7 +129,7 @@ class ParserForkSafetyTest extends TestCase
         for ($fiberIndex = 0; $fiberIndex < $fiberCount; $fiberIndex++) {
             $fibers[$fiberIndex] = new \Fiber(function () use ($fiberIndex, $iterationsPerFiber): array {
                 $parser = new Parser();
-                $extractor = new PHPExtractor($parser->registry());
+                $extractor = new PHPExtractor($parser->registry(), new DrupalCoreAdapter());
                 $counts = [];
 
                 for ($iteration = 0; $iteration < $iterationsPerFiber; $iteration++) {

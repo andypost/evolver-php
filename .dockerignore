@@ -6,3 +6,5 @@ build/
 .cache/
 .claude/
 .git/
+pharborist/
+drupalmoduleupgrader/

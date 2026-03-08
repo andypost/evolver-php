@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace DrupalEvolver\Command;
 
 use DrupalEvolver\Applier\TemplateApplier;
+use DrupalEvolver\Project\GitProjectManager;
 use DrupalEvolver\Storage\Database;
 use DrupalEvolver\Storage\DatabaseApi;
 use Symfony\Component\Console\Attribute\AsCommand;
@@ -74,6 +75,21 @@ class ApplyCommand extends Command
 
         $applier = new TemplateApplier($api);
         $projectPath = (string) (($scanRun['source_path'] ?? null) ?: $project['path']);
+        if (
+            ($project['source_type'] ?? 'local_path') === 'git_remote'
+            && $scanRun !== null
+            && !is_dir($projectPath)
+        ) {
+            $output->writeln('<comment>Materializing cached source for remote scan run...</comment>');
+            $materialized = (new GitProjectManager())->materializeBranchForRun(
+                $project,
+                (string) ($scanRun['branch_name'] ?? ''),
+                (int) $scanRun['id'],
+                isset($scanRun['commit_sha']) && $scanRun['commit_sha'] !== '' ? (string) $scanRun['commit_sha'] : null,
+            );
+            $projectPath = $materialized['source_path'];
+        }
+
         $stats = $applier->applyWithStats(
             (int) $project['id'],
             $projectPath,

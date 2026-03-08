@@ -5,12 +5,44 @@
         <div>
             <p class="eyebrow">Project</p>
             <h1>{{ project.name }}</h1>
-            <p class="muted">{{ project.remote_url ?: project.path }}</p>
+            <p class="muted">
+                {{ project.remote_url ?: project.path }}
+                {% if project.type %}
+                <span class="badge">{{ project.type }}</span>
+                {% endif %}
+            </p>
         </div>
-        <a class="button" href="/projects/{{ project.id }}/compare">Compare scan runs</a>
+        <a class="button" href="/projects/{{ project.id }}/compare">Compare Scan Runs</a>
+    </section>
+
+    {# Project Metadata Section #}
+    <section class="panel">
+        <div class="panel-head">
+            <h2>Project Information</h2>
+        </div>
+        <div class="status-grid">
+            <div>
+                <span class="meta-label">Project type</span>
+                <strong>{{ project.type ?: 'Not detected' }}</strong>
+            </div>
+            <div>
+                <span class="meta-label">Source</span>
+                <strong>{% if project.source_type == 'git_remote' %}Git remote{% else %}Local path{% endif %}</strong>
+            </div>
+            <div>
+                <span class="meta-label">Current framework version</span>
+                <strong>{{ project.core_version ?: 'Not detected' }}</strong>
+                <small class="muted">Auto-detected from composer.lock</small>
+            </div>
+            <div>
+                <span class="meta-label">Branches available</span>
+                <strong>{{ branches|length }}</strong>
+            </div>
+        </div>
     </section>
 
     <section class="grid two-up">
+        {# Branch Management #}
         <article class="panel">
             <div class="panel-head">
                 <h2>Branches</h2>
@@ -19,82 +51,162 @@
                 <ul class="branch-list">
                     {% for branch in branches %}
                         <li>
-                            <span>
-                                <strong>{{ branch.branch_name }}</strong>
-                                {% if branch.is_default %}<span class="pill">default</span>{% endif %}
-                            </span>
-                            <span class="muted">{{ branch.last_commit_sha ?: 'not fetched yet' }}</span>
+                            <div class="branch-info">
+                                <div>
+                                    <strong>{{ branch.branch_name }}</strong>
+                                    {% if branch.is_default %}<span class="pill">default</span>{% endif %}
+                                </div>
+                                <div class="muted small">
+                                    {{ branch.last_commit_sha ? branch.last_commit_sha|slice(0, 8) : 'not fetched yet' }}
+                                    {% if branch.last_scanned_at %}
+                                        <br>Last scanned: {{ branch.last_scanned_at }}
+                                        {% if branch.latest_run %}
+                                            ({{ branch.latest_run.target_core_version }})
+                                        {% endif %}
+                                    {% endif %}
+                                </div>
+                            </div>
+                            <div class="branch-actions">
+                                {% if branch.latest_run %}
+                                    <button class="button button-small" title="Set this branch and target version in the form"
+                                            onclick="selectBranchForScan('{{ branch.branch_name }}', '{{ branch.latest_run.target_core_version }}', '{{ branch.latest_run.from_core_version }}')">
+                                        Rescan
+                                    </button>
+                                {% else %}
+                                    <button class="button button-small" title="Select this branch in the form"
+                                            onclick="selectBranchForScan('{{ branch.branch_name }}')">
+                                        Select
+                                    </button>
+                                {% endif %}
+                            </div>
                         </li>
                     {% endfor %}
                 </ul>
             {% else %}
-                <p class="empty">No branches saved yet.</p>
+                <p class="empty">No branches detected yet.</p>
             {% endif %}
 
             <form class="form form-inline" action="/projects/{{ project.id }}/branches" method="post">
                 <label>
-                    <span>New branch</span>
-                    <input type="text" name="branch_name" placeholder="11.x" required>
+                    <span>Add branch</span>
+                    <input type="text" name="branch_name" placeholder="main, 11.x, etc." required>
                 </label>
                 <label class="checkbox">
                     <input type="checkbox" name="is_default" value="1">
                     <span>Default</span>
                 </label>
-                <button class="button" type="submit">Add branch</button>
+                <button class="button" type="submit">Add</button>
             </form>
         </article>
 
-        <article class="panel">
+        {# Scan Configuration #}
+        <article class="panel" id="scan-form-panel">
             <div class="panel-head">
-                <h2>Queue Scan</h2>
+                <h2>Scan Branch Against Core Upgrade Path</h2>
             </div>
-            <form class="form" action="/projects/{{ project.id }}/runs" method="post">
-                <label>
-                    <span>Branch</span>
-                    <select name="branch_name" required>
-                        {% for branch in branches %}
-                            <option value="{{ branch.branch_name }}" {% if branch.is_default %}selected{% endif %}>{{ branch.branch_name }}</option>
-                        {% endfor %}
-                    </select>
-                </label>
+            <p class="muted">
+                Scan one project branch against stored Drupal core changes for a specific source-to-target core upgrade path.
+            </p>
 
-                <label>
-                    <span>Target core version</span>
-                    <select name="target_core_version" required>
-                        {% for version in versions %}
-                            <option value="{{ version.tag }}">{{ version.tag }}</option>
-                        {% endfor %}
-                    </select>
-                </label>
+            {% if versions|length < 2 %}
+                <p class="empty">
+                    <strong>Need more versions indexed.</strong><br>
+                    You need at least 2 framework versions indexed to scan for breaking changes.
+                    <a href="/versions">Go to Versions →</a>
+                </p>
+            {% elseif branches|length == 0 %}
+                <p class="empty">
+                    <strong>No branches available.</strong><br>
+                    Add branches to this project first.
+                </p>
+            {% else %}
+                <form class="form" action="/projects/{{ project.id }}/runs" method="post" id="scan-form">
+                    <label>
+                        <span>Project branch</span>
+                        <select name="branch_name" required>
+                            {% for branch in branches %}
+                                <option value="{{ branch.branch_name }}" {% if branch.is_default %}selected{% endif %}>{{ branch.branch_name }}</option>
+                            {% endfor %}
+                        </select>
+                    </label>
 
-                <label>
-                    <span>Source core version override</span>
-                    <input type="text" name="from_core_version" placeholder="auto-detect from composer.lock">
-                </label>
+                    <div class="upgrade-path">
+                        <label>
+                            <span>Source core version</span>
+                            <input type="text" name="from_core_version" id="from_core_version" placeholder="Auto-detect">
+                            <small class="muted">Leave blank to auto-detect from the selected branch</small>
+                        </label>
 
-                <label>
-                    <span>Workers</span>
-                    <input type="number" name="workers" value="1" min="1" max="16">
-                </label>
+                        <span class="upgrade-arrow">→</span>
 
-                <button class="button button-primary" type="submit">Queue scan</button>
-            </form>
+                        <label>
+                            <span>Target core version</span>
+                            <select name="target_core_version" id="target_core_version" required>
+                                {% for version in versions %}
+                                    <option value="{{ version.tag }}">{{ version.tag }}</option>
+                                {% endfor %}
+                            </select>
+                        </label>
+                    </div>
+
+                    <label class="advanced">
+                        <details>
+                            <summary>Workers (advanced)</summary>
+                            <input type="number" name="workers" value="1" min="1" max="16">
+                            <small class="muted">More workers = faster scan</small>
+                        </details>
+                    </label>
+
+                    <button class="button button-primary" type="submit">Start Scan</button>
+                </form>
+            {% endif %}
         </article>
     </section>
 
+    <script>
+        function selectBranchForScan(branchName, targetVersion, fromVersion) {
+            const form = document.getElementById('scan-form');
+            if (!form) return;
+
+            form.querySelector('select[name=branch_name]').value = branchName;
+            
+            if (targetVersion) {
+                document.getElementById('target_core_version').value = targetVersion;
+            }
+            
+            if (fromVersion) {
+                document.getElementById('from_core_version').value = fromVersion;
+            } else if (fromVersion === '') {
+                document.getElementById('from_core_version').value = '';
+            }
+
+            const panel = document.getElementById('scan-form-panel');
+            panel.scrollIntoView({ behavior: 'smooth' });
+            
+            // Visual highlight
+            panel.style.transition = 'background-color 0.3s ease';
+            const originalBg = panel.style.backgroundColor;
+            panel.style.backgroundColor = 'rgba(11, 110, 79, 0.1)';
+            setTimeout(() => {
+                panel.style.backgroundColor = originalBg;
+            }, 1000);
+        }
+    </script>
+
+    {# Recent Scan Runs #}
     <section class="panel">
         <div class="panel-head">
-            <h2>Recent Runs</h2>
+            <h2>Recent Branch Scans</h2>
         </div>
         {% if runs %}
             <table class="table">
                 <thead>
                 <tr>
-                    <th>Run</th>
+                    <th>Scan</th>
                     <th>Branch</th>
-                    <th>Upgrade path</th>
+                    <th>Core Upgrade Path</th>
                     <th>Status</th>
-                    <th>Matches</th>
+                    <th>Issues</th>
                     <th>Created</th>
                 </tr>
                 </thead>
@@ -104,7 +216,7 @@
                         <td><a href="/runs/{{ run.id }}">#{{ run.id }}</a></td>
                         <td>{{ run.branch_name }}</td>
                         <td>{{ run.from_core_version ?: 'auto' }} → {{ run.target_core_version }}</td>
-                        <td>{{ run.status }}</td>
+                        <td><span data-run-status class="status-tag status-{{ run.status }}">{{ run.status }}</span></td>
                         <td>{{ run.match_count }}</td>
                         <td>{{ run.created_at }}</td>
                     </tr>
@@ -112,7 +224,7 @@
                 </tbody>
             </table>
         {% else %}
-            <p class="empty">No runs recorded yet.</p>
+            <p class="empty">No scans yet. Configure and run a scan above.</p>
         {% endif %}
     </section>
 {% endblock %}

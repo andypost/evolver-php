@@ -13,8 +13,8 @@ final class ProjectBranchRepo
     #[\NoDiscard]
     public function save(int $projectId, string $branchName, bool $isDefault = false, ?string $lastCommitSha = null): int
     {
-        (void) $this->db->transaction(function () use ($projectId, $branchName, $isDefault, $lastCommitSha): void {
-            (void) $this->db->execute(
+        $_ = $this->db->transaction(function () use ($projectId, $branchName, $isDefault, $lastCommitSha): void {
+            $_ = $this->db->execute(
                 "INSERT INTO project_branches (project_id, branch_name, is_default, last_commit_sha, updated_at)
                  VALUES (:project_id, :branch_name, :is_default, :last_commit_sha, datetime('now'))
                  ON CONFLICT(project_id, branch_name) DO UPDATE SET
@@ -30,7 +30,7 @@ final class ProjectBranchRepo
             );
 
             if ($isDefault) {
-                (void) $this->db->execute(
+                $_ = $this->db->execute(
                     'UPDATE project_branches
                      SET is_default = 0, updated_at = datetime(\'now\')
                      WHERE project_id = :project_id AND branch_name != :branch_name',

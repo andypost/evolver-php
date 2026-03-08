@@ -236,7 +236,7 @@ final class WebServer
             return $this->text('Path and tag are required.', HttpStatus::BAD_REQUEST);
         }
 
-        (void) $this->queue->enqueue('index_core', [
+        $_ = $this->queue->enqueue('index_core', [
             'path' => $path,
             'tag' => $tag,
             'workers' => $workers,
@@ -256,7 +256,7 @@ final class WebServer
             return $this->text('Both from and to versions are required.', HttpStatus::BAD_REQUEST);
         }
 
-        (void) $this->queue->enqueue('diff_versions', [
+        $_ = $this->queue->enqueue('diff_versions', [
             'from' => $from,
             'to' => $to,
             'workers' => $workers,
@@ -309,10 +309,23 @@ final class WebServer
 
         $runs = $this->api->scanRuns()->findByProject($projectId);
         $versions = $this->api->versions()->all();
+        $branches = $this->api->projectBranches()->findByProject($projectId);
+
+        foreach ($branches as &$branch) {
+            $latestRun = null;
+            foreach ($runs as $run) {
+                if ($run['branch_name'] === $branch['branch_name']) {
+                    $latestRun = $run;
+                    break;
+                }
+            }
+            $branch['latest_run'] = $latestRun;
+        }
+        unset($branch);
 
         return $this->html('project-detail.twig', [
             'project' => $project,
-            'branches' => $this->api->projectBranches()->findByProject($projectId),
+            'branches' => $branches,
             'runs' => $runs,
             'versions' => $versions,
         ]);
@@ -334,7 +347,7 @@ final class WebServer
             return $this->text('Branch name is required.', HttpStatus::BAD_REQUEST);
         }
 
-        $this->projects->addBranch($projectId, $branchName, $isDefault);
+        $_ = $this->projects->addBranch($projectId, $branchName, $isDefault);
 
         return $this->redirect('/projects/' . $projectId);
     }

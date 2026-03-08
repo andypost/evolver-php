@@ -22,17 +22,17 @@ final class Schema
         $this->migrateCodeMatchesTable();
         $this->ensureCodeMatchIndexes();
 
-        (void) $this->db->execute(
+        $_ = $this->db->execute(
             'UPDATE versions SET weight = (major * 1000000) + (minor * 1000) + patch WHERE weight IS NULL'
         );
-        (void) $this->db->execute("UPDATE projects SET source_type = 'local_path' WHERE source_type IS NULL OR source_type = ''");
+        $_ = $this->db->execute("UPDATE projects SET source_type = 'local_path' WHERE source_type IS NULL OR source_type = ''");
 
         $this->deduplicateProjectsByPath();
         $this->ensureMatchScopeKeys();
         $this->deduplicateCodeMatchesByScope();
 
         $this->db->pdo()->exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_project_path ON projects(path)');
-        (void) $this->db->execute(
+        $_ = $this->db->execute(
             "INSERT OR REPLACE INTO schema_meta (key, value) VALUES ('schema_version', '3')"
         );
     }
@@ -348,7 +348,7 @@ final class Schema
                     continue;
                 }
 
-                (void) $this->db->execute(
+                $_ = $this->db->execute(
                     'DELETE FROM code_matches
                      WHERE project_id = :old_id
                        AND EXISTS (
@@ -363,11 +363,11 @@ final class Schema
                        )',
                     ['old_id' => $oldId, 'keep_id' => $keepId]
                 );
-                (void) $this->db->execute(
+                $_ = $this->db->execute(
                     'UPDATE code_matches SET project_id = :keep_id WHERE project_id = :old_id',
                     ['keep_id' => $keepId, 'old_id' => $oldId]
                 );
-                (void) $this->db->execute(
+                $_ = $this->db->execute(
                     "UPDATE code_matches
                      SET scope_key = CASE
                          WHEN scan_run_id IS NOT NULL THEN 'run:' || scan_run_id
@@ -376,22 +376,22 @@ final class Schema
                      WHERE project_id = :keep_id AND scope_key = :old_scope_key",
                     ['keep_id' => $keepId, 'old_scope_key' => 'project:' . $oldId]
                 );
-                (void) $this->db->execute(
+                $_ = $this->db->execute(
                     'UPDATE scan_runs SET project_id = :keep_id WHERE project_id = :old_id',
                     ['keep_id' => $keepId, 'old_id' => $oldId]
                 );
-                (void) $this->db->execute(
+                $_ = $this->db->execute(
                     'UPDATE project_branches SET project_id = :keep_id WHERE project_id = :old_id',
                     ['keep_id' => $keepId, 'old_id' => $oldId]
                 );
-                (void) $this->db->execute('DELETE FROM projects WHERE id = :old_id', ['old_id' => $oldId]);
+                $_ = $this->db->execute('DELETE FROM projects WHERE id = :old_id', ['old_id' => $oldId]);
             }
         }
     }
 
     private function ensureMatchScopeKeys(): void
     {
-        (void) $this->db->execute(
+        $_ = $this->db->execute(
             "UPDATE code_matches
              SET scope_key = CASE
                  WHEN scan_run_id IS NOT NULL THEN 'run:' || scan_run_id
@@ -399,13 +399,13 @@ final class Schema
              END
              WHERE scope_key IS NULL OR scope_key = ''"
         );
-        (void) $this->db->execute('UPDATE code_matches SET byte_start = -1 WHERE byte_start IS NULL');
-        (void) $this->db->execute('UPDATE code_matches SET byte_end = -1 WHERE byte_end IS NULL');
+        $_ = $this->db->execute('UPDATE code_matches SET byte_start = -1 WHERE byte_start IS NULL');
+        $_ = $this->db->execute('UPDATE code_matches SET byte_end = -1 WHERE byte_end IS NULL');
     }
 
     private function deduplicateCodeMatchesByScope(): void
     {
-        (void) $this->db->execute(
+        $_ = $this->db->execute(
             'DELETE FROM code_matches
              WHERE id NOT IN (
                  SELECT MAX(id)

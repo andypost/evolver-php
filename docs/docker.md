@@ -20,6 +20,17 @@ The only practical difference was command style (`run` vs `exec`).
 
 Using one `evolver` service avoids drift where one image is rebuilt and the other is stale (for example, FFI loaded in one but missing in the other).
 
+## Build Performance
+
+`make build` runs `docker compose build` with `COMPOSE_BAKE=true`, so BuildKit's Bake frontend is used by default.
+
+The image build is also structured to keep rebuilds fast:
+- `composer.json` and `composer.lock` are copied before the rest of the source tree, so normal code edits do not invalidate `composer install`
+- Composer uses a BuildKit cache mount at `/home/evolver/.composer/cache`
+- local helper checkouts like `pharborist/` and `drupalmoduleupgrader/` are excluded from the Docker build context
+
+No extra BuildKit bootstrap or warmup step is required.
+
 ## OPcache/JIT Defaults
 
 The image enables OPcache for CLI, but keeps JIT disabled by default:
@@ -40,6 +51,9 @@ The Docker image installs all parser dependencies:
 - `php85`
 - matching `php85-ffi`, `php85-pdo_sqlite`
 - `tree-sitter`, `tree-sitter-php`, `tree-sitter-yaml`
+- `tree-sitter-twig` built from source and installed as `/usr/lib/libtree-sitter-twig.so`
+
+Twig is compiled in the intermediate `ts-source` stage. The final runtime image keeps the grammar `.so` files and `tree-sitter`, but not the Twig build toolchain.
 
 The image installs:
 - memprof: `php85-pecl-memprof`
@@ -49,6 +63,7 @@ Core and grammar libraries come from Alpine packages:
 - `/usr/lib/libtree-sitter.so*` (versioned SONAME on Alpine)
 - `/usr/lib/libtree-sitter-php.so`
 - `/usr/lib/libtree-sitter-yaml.so`
+- `/usr/lib/libtree-sitter-twig.so`
 
 ### 2) Runtime FFI enablement
 

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace DrupalEvolver\Indexer\Extractor;
 
+use DrupalEvolver\Adapter\EcosystemAdapterInterface;
 use DrupalEvolver\TreeSitter\Node;
 
 class PHPExtractor implements ExtractorInterface
@@ -11,15 +12,16 @@ class PHPExtractor implements ExtractorInterface
     private string $currentNamespace = '';
     private array $symbols = [];
     private ?\DrupalEvolver\TreeSitter\Query $cachedQuery = null;
-    
+
     private ?string $currentClassFqn = null;
     private int $currentClassEndByte = -1;
 
     public function __construct(
-        private ?\DrupalEvolver\TreeSitter\LanguageRegistry $registry = null
+        private \DrupalEvolver\TreeSitter\LanguageRegistry $registry,
+        private EcosystemAdapterInterface $adapter,
     ) {}
 
-    public function extract(Node $root, string $source, string $filePath): array
+    public function extract(Node $root, string $source, string $filePath, ?string $absolutePath = null): array
     {
         $this->currentNamespace = '';
         $this->currentClassFqn = null;
@@ -203,8 +205,7 @@ class PHPExtractor implements ExtractorInterface
 
     private function checkProceduralHook(array $symbol, string $filePath): void
     {
-        $ext = pathinfo($filePath, PATHINFO_EXTENSION);
-        if (!in_array($ext, ['module', 'install', 'inc', 'profile'], true)) {
+        if (!$this->adapter->isHookFile($filePath)) {
             return;
         }
 
@@ -212,14 +213,8 @@ class PHPExtractor implements ExtractorInterface
             return;
         }
 
-        $filename = basename($filePath);
-        $moduleName = explode('.', $filename)[0];
-
-        if (str_starts_with($symbol['name'], $moduleName . '_')) {
-            $hookName = substr($symbol['name'], strlen($moduleName) + 1);
-            if (in_array($hookName, ['preprocess', 'process'], true)) {
-                return;
-            }
+        $hookName = $this->adapter->extractHookName($symbol['name'], $filePath);
+        if ($hookName !== null) {
             $this->symbols[] = array_merge($symbol, [
                 'symbol_type' => 'hook',
                 'fqn' => $hookName,

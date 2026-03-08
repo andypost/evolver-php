@@ -33,12 +33,15 @@ final class RemoteContactModulePipelineTest extends TestCase
 
         $tmpDir = $this->createTempDir('evolver-remote-contact-');
         $dbPath = $tmpDir . '/state.sqlite';
+        $cacheRoot = $tmpDir . '/cache/projects';
+        $previousCacheDir = getenv('EVOLVER_PROJECT_CACHE_DIR');
 
         try {
+            $this->setProjectCacheDir($cacheRoot);
             $api = new DatabaseApi($dbPath);
             $projects = new ManagedProjectService($api);
             $projectId = $projects->registerRemoteProject('Drupal Contact', $remoteUrl, $this->modernBranch(), 'module');
-            (void) $projects->addBranch($projectId, $this->legacyBranch());
+            $projects->addBranch($projectId, $this->legacyBranch());
 
             $project = $api->projects()->findById($projectId);
             $this->assertNotNull($project);
@@ -95,6 +98,7 @@ final class RemoteContactModulePipelineTest extends TestCase
             $storedChanges = $api->changes()->findByVersions((int) $modernVersion['id'], (int) $legacyVersion['id']);
             $this->assertCount(count($changes), $storedChanges);
         } finally {
+            $this->restoreProjectCacheDir($previousCacheDir);
             $this->removeDir($tmpDir);
         }
     }
@@ -217,5 +221,23 @@ final class RemoteContactModulePipelineTest extends TestCase
         }
 
         @rmdir($dir);
+    }
+
+    private function setProjectCacheDir(string $cacheRoot): void
+    {
+        putenv('EVOLVER_PROJECT_CACHE_DIR=' . $cacheRoot);
+        $_ENV['EVOLVER_PROJECT_CACHE_DIR'] = $cacheRoot;
+    }
+
+    private function restoreProjectCacheDir(string|false $previous): void
+    {
+        if ($previous === false) {
+            putenv('EVOLVER_PROJECT_CACHE_DIR');
+            unset($_ENV['EVOLVER_PROJECT_CACHE_DIR']);
+            return;
+        }
+
+        putenv('EVOLVER_PROJECT_CACHE_DIR=' . $previous);
+        $_ENV['EVOLVER_PROJECT_CACHE_DIR'] = $previous;
     }
 }

@@ -217,7 +217,7 @@ PHP;
                 12 * 1024 * 1024,
                 30,
                 function () use ($scanner, $projectDir): void {
-                    (void) $scanner->scan($projectDir, '1.1.0', '1.0.0');
+                    $_ = $scanner->scan($projectDir, '1.1.0', '1.0.0');
                 },
                 'Repeated project scans leaked memory'
             );

@@ -20,8 +20,8 @@ final class ScanRunServiceTest extends TestCase
     {
         $api = new DatabaseApi(':memory:');
         $projectId = $api->projects()->save('demo', '/tmp/demo', 'module', null, 'local_path');
-        (void) $api->projectBranches()->save($projectId, 'main', true);
-        (void) $api->versions()->create('10.2.0', 10, 2, 0);
+        $_ = $api->projectBranches()->save($projectId, 'main', true);
+        $_ = $api->versions()->create('10.2.0', 10, 2, 0);
 
         $scanner = $this->createScannerOrSkip($api);
         $service = new ScanRunService($api, $scanner, new JobQueue($api), new GitProjectManager());
@@ -29,7 +29,7 @@ final class ScanRunServiceTest extends TestCase
         $this->expectException(\InvalidArgumentException::class);
         $this->expectExceptionMessage('Target core version is not indexed');
 
-        (void) $service->queueBranchScan($projectId, 'main', '10.3.0', '10.2.0', 1);
+        $_ = $service->queueBranchScan($projectId, 'main', '10.3.0', '10.2.0', 1);
     }
 
     public function testExecuteQueuedJobScansLocalProjectAndCompletesRun(): void
@@ -57,7 +57,7 @@ final class ScanRunServiceTest extends TestCase
                 'source_text' => 'function old_func(int $a): int { return $a + 1; }',
             ]);
 
-            (void) $api->changes()->create([
+            $_ = $api->changes()->create([
                 'from_version_id' => $fromId,
                 'to_version_id' => $toId,
                 'language' => 'php',
@@ -74,7 +74,7 @@ final class ScanRunServiceTest extends TestCase
             ]);
 
             $projectId = $api->projects()->save('demo', $projectDir, 'module', null, 'local_path');
-            (void) $api->projectBranches()->save($projectId, 'main', true);
+            $_ = $api->projectBranches()->save($projectId, 'main', true);
 
             $scanner = $this->createScannerOrSkip($api);
             $queue = new JobQueue($api);

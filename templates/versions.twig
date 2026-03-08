@@ -3,41 +3,44 @@
 {% block content %}
     <section class="hero hero-compact">
         <div>
-            <p class="eyebrow">Core Knowledge Base</p>
+            <p class="eyebrow">Framework Knowledge Base</p>
             <h1>Indexed Versions</h1>
+            <p class="muted">Index framework versions to build the knowledge base for detecting breaking changes.</p>
         </div>
     </section>
 
     <section class="grid two-up">
         <article class="panel">
             <div class="panel-head">
-                <h2>Index Drupal Core</h2>
+                <h2>Index Framework Version</h2>
             </div>
+            <p class="muted">Index a framework version (Drupal, Symfony, etc.) to build the knowledge base of symbols and breaking changes.</p>
             <form class="form" action="/versions/index" method="post">
                 <label>
-                    <span>Path to Drupal core checkout</span>
-                    <input type="text" name="path" placeholder="/mnt/project/core" required>
+                    <span>Path to framework checkout</span>
+                    <input type="text" name="path" placeholder="/path/to/drupal or /path/to/symfony" required>
                 </label>
                 <label>
                     <span>Version tag</span>
-                    <input type="text" name="tag" placeholder="11.0.0" required>
+                    <input type="text" name="tag" placeholder="11.0.0, 7.1.0, etc." required>
                 </label>
                 <label>
                     <span>Workers</span>
                     <input type="number" name="workers" value="4" min="1" max="16">
                 </label>
-                <button class="button button-primary" type="submit">Index</button>
+                <button class="button button-primary" type="submit">Index Version</button>
             </form>
         </article>
 
         <article class="panel">
             <div class="panel-head">
-                <h2>Diff Versions</h2>
+                <h2>Diff Two Versions</h2>
             </div>
+            <p class="muted">Generate breaking changes between two indexed framework versions.</p>
             {% if versions|length >= 2 %}
                 <form class="form" action="/versions/diff" method="post">
                     <label>
-                        <span>From version</span>
+                        <span>From (current)</span>
                         <select name="from" required>
                             {% for version in versions %}
                                 <option value="{{ version.tag }}">{{ version.tag }} ({{ version.symbol_count ?? 0 }} symbols)</option>
@@ -45,7 +48,7 @@
                         </select>
                     </label>
                     <label>
-                        <span>To version</span>
+                        <span>To (target)</span>
                         <select name="to" required>
                             {% for version in versions %}
                                 <option value="{{ version.tag }}"{% if loop.last %} selected{% endif %}>{{ version.tag }} ({{ version.symbol_count ?? 0 }} symbols)</option>
@@ -56,7 +59,7 @@
                         <span>Workers</span>
                         <input type="number" name="workers" value="4" min="1" max="16">
                     </label>
-                    <button class="button button-primary" type="submit">Diff</button>
+                    <button class="button button-primary" type="submit">Generate Diff</button>
                 </form>
             {% else %}
                 <p class="empty">Index at least two versions to enable diffing.</p>
@@ -66,7 +69,7 @@
 
     <section class="panel">
         <div class="panel-head">
-            <h2>Versions</h2>
+            <h2>Indexed Versions</h2>
             <span class="count">{{ versions|length }}</span>
         </div>
         {% if versions %}
@@ -93,14 +96,14 @@
                 </tbody>
             </table>
         {% else %}
-            <p class="empty">No versions indexed yet. Use the form above to index a Drupal core checkout.</p>
+            <p class="empty">No versions indexed yet. Use the form above to index a framework version.</p>
         {% endif %}
     </section>
 
     {% if changes_summary %}
         <section class="panel">
             <div class="panel-head">
-                <h2>Stored Change Diffs</h2>
+                <h2>Breaking Change Diffs</h2>
             </div>
             <table class="table">
                 <thead>
@@ -134,7 +137,7 @@
                         </td>
                         <td class="text-right"><strong>{{ diff.change_count }}</strong></td>
                         <td>
-                            <a href="/versions/diff/{{ diff.from_tag }}/{{ diff.to_tag }}" class="button button-small">View Details</a>
+                            <a href="/versions/diff/{{ diff.from_tag }}/{{ diff.to_tag }}" class="button button-small">View</a>
                         </td>
                     </tr>
                 {% endfor %}

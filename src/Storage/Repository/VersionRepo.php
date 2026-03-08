@@ -54,6 +54,24 @@ class VersionRepo
         return $row ?: null;
     }
 
+    #[\NoDiscard]
+    public function findClosest(string $tag): ?array
+    {
+        if (preg_match('/^(\d+)\.(\d+)\.(\d+)$/', $tag, $matches)) {
+            $weight = $this->buildWeight((int) $matches[1], (int) $matches[2], (int) $matches[3]);
+        } else {
+            return null;
+        }
+
+        // Find the version with the smallest weight difference
+        $row = $this->db->query(
+            'SELECT *, ABS(weight - :w) as diff FROM versions ORDER BY diff ASC LIMIT 1',
+            ['w' => $weight]
+        )->fetch();
+
+        return $row ?: null;
+    }
+
     public function updateCounts(int $id, int $fileCount, int $symbolCount): int
     {
         return $this->db->execute(

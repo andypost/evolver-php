@@ -19,12 +19,12 @@ class YAMLExtractor implements ExtractorInterface
         $this->semanticExtractor = new DrupalYamlSemanticExtractor();
     }
 
-    public function extract(Node $root, string $source, string $filePath): array
+    public function extract(Node $root, string $source, string $filePath, ?string $absolutePath = null): array
     {
         $this->symbols = [];
         $basename = basename($filePath);
 
-        $semanticSymbols = $this->semanticExtractor->extract($source, $filePath);
+        $semanticSymbols = $this->semanticExtractor->extract($source, $filePath, $absolutePath);
         if ($semanticSymbols !== null) {
             return $semanticSymbols;
         }

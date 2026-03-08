@@ -38,11 +38,15 @@ make worker
 Then open `http://localhost:8080` and:
 - register a Git-backed project
 - save one or more branches
-- queue scans for a specific branch and upgrade target
+- queue scans for a specific project branch against a source-to-target core upgrade path
 - compare two completed scan runs for the same project
 - open a version's symbol browser and click a symbol name to inspect its linked details
 
 The worker performs the blocking Git and scan work. The web UI only handles forms, run history, and SSE status updates.
+New managed remote projects use a shared Git cache under `.cache/projects/<project-slug>/repo` by default, with ephemeral scan sources under `.cache/projects/<project-slug>/runs/<run-id>/source`. Set `EVOLVER_PROJECT_CACHE_DIR` to override that root. Existing stored remote project paths are still honored, and branch detection uses a temporary `/tmp/evolver_remote_detect_*` clone that is removed automatically.
+The project page has two separate concepts:
+- `Scan Branch Against Core Upgrade Path` checks one project branch against indexed Drupal core changes
+- `Compare Scan Runs` compares findings from two already-completed scans of the same project
 
 ## Complete Workflow: Drupal 10 → 11 Upgrade
 
@@ -145,6 +149,24 @@ make profile EXTRA_HOST_PATH=../drupal
 make profile-report
 ```
 
+### Indexing SDC Components
+
+Drupal's Single Directory Components (SDC) require their parent extension (module, theme, or profile) to be indexed for full cross-referencing.
+
+```bash
+# Index a theme with SDC components
+make evr -- index /mnt/project/core/profiles/demo_umami/themes/umami --tag=12.0.0-umami EXTRA_HOST_PATH=../drupal
+
+# Index all profiles (including Umami)
+make evr -- index /mnt/project/core/profiles --tag=12.0.0-profiles EXTRA_HOST_PATH=../drupal
+```
+
+When indexing SDCs, Evolver automatically:
+1. Detects `*.component.yml` files and creates `sdc_component` symbols.
+2. Identifies associated `.twig`, `.css`, and `.js` files within the component directory.
+3. Tags all symbols (selectors, variables, functions) found in those files with the SDC component ID (e.g., `umami:badge`).
+4. Creates semantic links between the `sdc_component` symbol and all its constituent assets.
+
 ### Debugging Queries
 
 Test tree-sitter S-expression queries directly:
@@ -153,20 +175,31 @@ Test tree-sitter S-expression queries directly:
 make ev -- query '(class_declaration name: (name) @cls)' src/Indexer/CoreIndexer.php
 ```
 
-Search semantic YAML data already indexed into SQLite:
+Search semantic YAML and SDC data already indexed into SQLite:
 
 ```bash
+# Find SDC components
+make yaml-search SEARCH_TAG=12.0.0-profiles SEARCH_TYPES=sdc_component SEARCH_TERM=badge
+
 # Find service ids
 make yaml-search SEARCH_TAG=11.0.0 SEARCH_TYPES=service SEARCH_TERM=block.repository
 
 # Find module/theme info files that mention "block"
 make yaml-search SEARCH_TAG=11.0.0 SEARCH_TYPES=module_info,theme_info SEARCH_TERM=block
 
+# Find Drupal libraries that own a specific asset file
+make yaml-search SEARCH_TAG=11.0.0 SEARCH_TYPES=drupal_library SEARCH_TERM=core/modules/block/js/block.admin.js
+
 # Narrow the JSON output with jq
-make yaml-search SEARCH_TAG=11.0.0 SEARCH_TYPES=module_info SEARCH_TERM=block | jq '.results[] | {fqn, file_path, dependency_targets: .metadata.dependency_targets}'
+make yaml-search SEARCH_TAG=12.0.0-profiles SEARCH_TYPES=sdc_component SEARCH_TERM=badge | jq '.results[] | {fqn, file_path, metadata: .metadata}'
 ```
 
-In the web UI, open `Knowledge Base`, choose a version, then open `Symbols`. Symbol names now link to a detail page. For YAML services, the detail page shows the linked PHP implementation class when Evolver indexed both sides. For PHP classes, the same page shows the reverse `registered service` relationship.
+For `drupal_library` and `sdc_component` asset searches, the path is relative to the indexed root.
+
+In the web UI, open `Knowledge Base`, choose a version, then open `Symbols`. Symbol names now link to a detail page:
+- **YAML Services**: shows the linked PHP implementation class and reverse `registered service` relationship.
+- **Drupal Libraries**: shows related JS and CSS symbols from referenced assets. JS/CSS symbols link back to the owning library.
+- **SDC Components**: shows all symbols (CSS selectors, Twig variables/blocks, JS symbols) belonging to that component. Assets also provide a `part of component` link back to the main SDC declaration.
 
 ## Troubleshooting
 

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace DrupalEvolver\Tests\Unit\Indexer;
 
+use DrupalEvolver\Adapter\DrupalCoreAdapter;
 use DrupalEvolver\Indexer\FileClassifier;
 use PHPUnit\Framework\TestCase;
 
@@ -13,7 +14,7 @@ class FileClassifierTest extends TestCase
 
     protected function setUp(): void
     {
-        $this->classifier = new FileClassifier();
+        $this->classifier = new FileClassifier(new DrupalCoreAdapter());
     }
 
     public function testPhpExtensions(): void
@@ -39,6 +40,9 @@ class FileClassifierTest extends TestCase
         $this->assertSame('javascript', $this->classifier->classify('script.mjs'));
         $this->assertSame('css', $this->classifier->classify('style.css'));
         $this->assertSame('drupal_libraries', $this->classifier->classify('core.libraries.yml'));
+        $this->assertSame('twig', $this->classifier->classify('template.twig'));
+        $this->assertSame('twig', $this->classifier->classify('template.html.twig'));
+        $this->assertSame('twig', $this->classifier->classify('component.html.twig'));
     }
 
     public function testUnknownExtensions(): void

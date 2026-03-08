@@ -59,10 +59,9 @@ class ImportCommand extends Command
         $grepFile = $configDir . '/drupalmoduleupgrader.grep.yml';
         if (file_exists($grepFile)) {
             $grep = $this->parseYaml($grepFile);
-            $defs = $grep['definitions'] ?? [];
 
             // Function call renames
-            $functionCalls = $defs['function_calls'] ?? [];
+            $functionCalls = $grep['function_calls'] ?? [];
             foreach ($functionCalls as $oldFunc => $newFunc) {
                 $changes[] = $this->buildFunctionCallRewrite(
                     $fromVersionId, $toVersionId,
@@ -72,7 +71,7 @@ class ImportCommand extends Command
             $output->writeln(sprintf('  grep.yml function_calls: <info>%d</info> patterns', count($functionCalls)));
 
             // Global variables
-            $globals = $defs['globals'] ?? [];
+            $globals = $grep['globals'] ?? [];
             foreach ($globals as $variable => $replacement) {
                 $changes[] = $this->buildGlobalReplace(
                     $fromVersionId, $toVersionId,
@@ -82,7 +81,7 @@ class ImportCommand extends Command
             $output->writeln(sprintf('  grep.yml globals: <info>%d</info> patterns', count($globals)));
 
             // Constants
-            $constants = $defs['constants'] ?? [];
+            $constants = $grep['constants'] ?? [];
             foreach ($constants as $oldConst => $newConst) {
                 $changes[] = $this->buildConstantReplace(
                     $fromVersionId, $toVersionId,
@@ -96,10 +95,9 @@ class ImportCommand extends Command
         $functionsFile = $configDir . '/drupalmoduleupgrader.functions.yml';
         if (file_exists($functionsFile)) {
             $functions = $this->parseYaml($functionsFile);
-            $defs = $functions['definitions'] ?? [];
             $functionCount = 0;
 
-            foreach ($defs as $groupName => $group) {
+            foreach ($functions as $groupName => $group) {
                 $message = (string) ($group['message'] ?? '');
                 $docs = $group['documentation'] ?? [];
                 $docUrl = !empty($docs) ? (string) ($docs[0]['url'] ?? '') : '';
@@ -149,10 +147,9 @@ class ImportCommand extends Command
         $hooksFile = $configDir . '/drupalmoduleupgrader.hooks.yml';
         if (file_exists($hooksFile)) {
             $hooks = $this->parseYaml($hooksFile);
-            $defs = $hooks['definitions'] ?? [];
             $hookCount = 0;
 
-            foreach ($defs as $groupName => $group) {
+            foreach ($hooks as $groupName => $group) {
                 $message = (string) ($group['message'] ?? '');
                 $docs = $group['documentation'] ?? [];
                 $docUrl = !empty($docs) ? (string) ($docs[0]['url'] ?? '') : '';
@@ -187,10 +184,9 @@ class ImportCommand extends Command
         $rewritersFile = $configDir . '/drupalmoduleupgrader.rewriters.yml';
         if (file_exists($rewritersFile)) {
             $rewriters = $this->parseYaml($rewritersFile);
-            $defs = $rewriters['definitions'] ?? [];
             $propCount = 0;
 
-            foreach ($defs as $entityType => $config) {
+            foreach ($rewriters as $entityType => $config) {
                 $typeHint = (string) ($config['type_hint'] ?? '');
                 $properties = $config['properties'] ?? [];
 

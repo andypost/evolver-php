@@ -117,13 +117,17 @@ final class ScanRunService
 
         try {
             $this->queue->progress($jobId, 0, 1, 'Preparing source tree');
-            $materialized = $this->gitProjectManager->materializeBranch(
+            $logger = function (string $level, string $message) use ($jobId, $output): void {
+                $this->queue->log($jobId, $level, $message);
+                $output?->writeln(sprintf('[%s] %s', strtoupper($level), $message));
+            };
+
+            $materialized = $this->gitProjectManager->materializeBranchForRun(
                 $project,
                 $branchName,
-                function (string $level, string $message) use ($jobId, $output): void {
-                    $this->queue->log($jobId, $level, $message);
-                    $output?->writeln(sprintf('[%s] %s', strtoupper($level), $message));
-                }
+                $runId,
+                null,
+                $logger,
             );
 
             $sourcePath = $materialized['source_path'];
@@ -141,6 +145,15 @@ final class ScanRunService
                 throw new \RuntimeException('Unable to detect the source core version for this branch.');
             }
 
+            // Fallback to the closest indexed version if the detected one isn't indexed
+            if (!$this->api->versions()->findByTag($fromCoreVersion)) {
+                $closest = $this->api->versions()->findClosest($fromCoreVersion);
+                if ($closest) {
+                    $logger('warn', sprintf('Detected core version %s is not indexed. Using closest available version: %s', $fromCoreVersion, $closest['tag']));
+                    $fromCoreVersion = $closest['tag'];
+                }
+            }
+
             $this->api->scanRuns()->markRunning($runId, $commitSha, $sourcePath, $fromCoreVersion);
             $this->queue->log(
                 $jobId,
@@ -149,7 +162,7 @@ final class ScanRunService
             );
 
             $this->scanner->setWorkerCount($workers);
-            (void) $this->scanner->scanIntoProject(
+            $_ = $this->scanner->scanIntoProject(
                 $projectId,
                 $runId,
                 $sourcePath,
@@ -169,6 +182,13 @@ final class ScanRunService
             $this->queue->log($jobId, 'error', $e->getMessage());
             $this->queue->fail($jobId, $e->getMessage());
             throw $e;
+        } finally {
+            try {
+                $this->gitProjectManager->cleanupRunSource($project, $runId);
+            } catch (\Throwable $cleanupError) {
+                $this->queue->log($jobId, 'warn', 'Failed to clean materialized source: ' . $cleanupError->getMessage());
+                $output?->writeln('[WARN] Failed to clean materialized source: ' . $cleanupError->getMessage());
+            }
         }
     }
 }

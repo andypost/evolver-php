@@ -185,6 +185,68 @@ class DatabaseApi
             }
         }
 
+        if ($language === 'drupal_libraries' && $symbolType === 'drupal_library') {
+            $metadata = $this->decodeJsonMap($symbol['metadata_json'] ?? null);
+            $assetPaths = $this->decodeJsonStringList($metadata['asset_paths'] ?? null);
+
+            foreach ($this->findAssetSymbolsForPaths($versionId, $assetPaths) as $assetSymbol) {
+                $links[] = [
+                    'relationship' => $assetSymbol['language'] === 'css' ? 'css_asset_symbol' : 'javascript_asset_symbol',
+                    'symbol' => $assetSymbol,
+                ];
+            }
+        }
+
+        if ($symbolType === 'sdc_component') {
+            $metadata = $this->decodeJsonMap($symbol['metadata_json'] ?? null);
+            $sdcId = $metadata['sdc_component'] ?? $symbol['fqn'];
+            
+            $componentSymbols = $this->database->query(
+                'SELECT s.*, f.file_path
+                 FROM symbols s
+                 JOIN parsed_files f ON f.id = s.file_id
+                 WHERE s.version_id = :vid
+                   AND s.id != :sid
+                   AND json_extract(s.metadata_json, "$.sdc_component") = :sdc',
+                [
+                    'vid' => $versionId,
+                    'sid' => $symbolId,
+                    'sdc' => $sdcId,
+                ]
+            )->fetchAll();
+
+            foreach ($componentSymbols as $cs) {
+                $links[] = [
+                    'relationship' => 'component_asset',
+                    'symbol' => $cs,
+                ];
+            }
+        }
+
+        $sdcId = $this->decodeJsonMap($symbol['metadata_json'] ?? null)['sdc_component'] ?? null;
+        if ($sdcId && $symbolType !== 'sdc_component') {
+            $sdcSymbol = $this->database->query(
+                'SELECT s.*, f.file_path
+                 FROM symbols s
+                 JOIN parsed_files f ON f.id = s.file_id
+                 WHERE s.version_id = :vid
+                   AND s.symbol_type = "sdc_component"
+                   AND (s.fqn = :sdc OR json_extract(s.metadata_json, "$.sdc_component") = :sdc)
+                 LIMIT 1',
+                [
+                    'vid' => $versionId,
+                    'sdc' => $sdcId,
+                ]
+            )->fetch();
+
+            if ($sdcSymbol) {
+                $links[] = [
+                    'relationship' => 'part_of_component',
+                    'symbol' => $sdcSymbol,
+                ];
+            }
+        }
+
         if ($language === 'php' && $symbolType === 'class') {
             $serviceRows = $this->database->query(
                 'SELECT s.*, f.file_path
@@ -207,6 +269,36 @@ class DatabaseApi
                 $links[] = [
                     'relationship' => 'registered_service',
                     'symbol' => $serviceRow,
+                ];
+            }
+        }
+
+        if (in_array($language, ['javascript', 'css'], true)) {
+            $libraryRows = $this->database->query(
+                'SELECT s.*, f.file_path
+                 FROM symbols s
+                 JOIN parsed_files f ON f.id = s.file_id
+                 WHERE s.version_id = :vid
+                   AND s.language = :lang
+                   AND s.symbol_type = :type
+                   AND EXISTS (
+                       SELECT 1
+                       FROM json_each(COALESCE(s.metadata_json, \'{}\'), \'$.asset_paths\')
+                       WHERE json_each.value = :path
+                   )
+                 ORDER BY s.fqn',
+                [
+                    'vid' => $versionId,
+                    'lang' => 'drupal_libraries',
+                    'type' => 'drupal_library',
+                    'path' => (string) ($symbol['file_path'] ?? ''),
+                ]
+            )->fetchAll();
+
+            foreach ($libraryRows as $libraryRow) {
+                $links[] = [
+                    'relationship' => 'declared_by_library',
+                    'symbol' => $libraryRow,
                 ];
             }
         }
@@ -632,12 +724,13 @@ class DatabaseApi
     }
 
     /**
-     * Search semantic YAML symbols by exact references stored in metadata/signature JSON.
+     * Search semantic YAML-derived symbols by exact references stored in metadata/signature JSON.
      *
      * Intended for Drupal YAML use cases like:
      * - find info files mentioning module "block"
      * - find links referencing route "entity.block.edit_form"
      * - find exported config depending on module "node"
+     * - find Drupal libraries referencing asset path "js/block.js"
      *
      * @param array<int, string> $symbolTypes
      * @return array<int, array<string, mixed>>
@@ -665,11 +758,10 @@ class DatabaseApi
                 AND cs.fqn = ltrim(COALESCE(json_extract(s.signature_json, '$.class'), ''), '\\')
             LEFT JOIN parsed_files cf ON cf.id = cs.file_id
             WHERE s.version_id = :vid
-              AND s.language = :lang
+              AND s.language IN ('yaml', 'drupal_libraries')
             SQL;
         $params = [
             'vid' => $versionId,
-            'lang' => 'yaml',
             'term' => $term,
             'like' => '%' . $term . '%',
         ];
@@ -704,6 +796,8 @@ class DatabaseApi
                 OR json_extract(s.metadata_json, '$.base_route') = :term
                 OR json_extract(s.metadata_json, '$.parent') = :term
                 OR json_extract(s.metadata_json, '$.parent_id') = :term
+                OR json_extract(s.metadata_json, '$.owner') = :term
+                OR json_extract(s.metadata_json, '$.owner') LIKE :like
                 OR EXISTS (
                     SELECT 1
                     FROM json_each(COALESCE(s.metadata_json, '{}'), '$.mentioned_extensions')
@@ -731,6 +825,34 @@ class DatabaseApi
                 )
                 OR EXISTS (
                     SELECT 1
+                    FROM json_each(COALESCE(s.metadata_json, '{}'), '$.asset_paths')
+                    WHERE json_each.value = :term
+                       OR json_each.value LIKE :like
+                )
+                OR EXISTS (
+                    SELECT 1
+                    FROM json_each(COALESCE(s.metadata_json, '{}'), '$.javascript_assets')
+                    WHERE json_each.value = :term
+                       OR json_each.value LIKE :like
+                )
+                OR EXISTS (
+                    SELECT 1
+                    FROM json_each(COALESCE(s.metadata_json, '{}'), '$.css_assets')
+                    WHERE json_each.value = :term
+                       OR json_each.value LIKE :like
+                )
+                OR EXISTS (
+                    SELECT 1
+                    FROM json_each(COALESCE(s.metadata_json, '{}'), '$.dependency_libraries')
+                    WHERE json_each.value = :term
+                )
+                OR EXISTS (
+                    SELECT 1
+                    FROM json_each(COALESCE(s.metadata_json, '{}'), '$.dependency_owners')
+                    WHERE json_each.value = :term
+                )
+                OR EXISTS (
+                    SELECT 1
                     FROM json_each(COALESCE(s.signature_json, '{}'), '$.dependencies')
                     WHERE json_each.value = :term
                 )
@@ -753,6 +875,36 @@ class DatabaseApi
             ORDER BY s.symbol_type, s.fqn
             LIMIT {$limit}
         SQL;
+
+        return $this->database->query($sql, $params)->fetchAll();
+    }
+
+    /**
+     * @param array<int, string> $paths
+     * @return array<int, array<string, mixed>>
+     */
+    private function findAssetSymbolsForPaths(int $versionId, array $paths): array
+    {
+        if ($paths === []) {
+            return [];
+        }
+
+        $params = ['vid' => $versionId];
+        $placeholders = [];
+
+        foreach (array_values(array_unique($paths)) as $index => $path) {
+            $key = 'path' . $index;
+            $placeholders[] = ':' . $key;
+            $params[$key] = $path;
+        }
+
+        $sql = 'SELECT s.*, f.file_path
+                FROM symbols s
+                JOIN parsed_files f ON f.id = s.file_id
+                WHERE s.version_id = :vid
+                  AND f.file_path IN (' . implode(', ', $placeholders) . ')
+                  AND s.language IN (\'javascript\', \'css\')
+                ORDER BY f.file_path, s.language, COALESCE(s.line_start, 0), s.fqn';
 
         return $this->database->query($sql, $params)->fetchAll();
     }
@@ -807,5 +959,29 @@ class DatabaseApi
         $decoded = json_decode($json, true);
 
         return is_array($decoded) ? $decoded : [];
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private function decodeJsonStringList(mixed $value): array
+    {
+        if (!is_array($value)) {
+            return [];
+        }
+
+        $items = [];
+        foreach ($value as $item) {
+            if (!is_scalar($item) && $item !== null) {
+                continue;
+            }
+
+            $string = trim((string) $item);
+            if ($string !== '') {
+                $items[] = $string;
+            }
+        }
+
+        return array_values(array_unique($items));
     }
 }

@@ -13,5 +13,5 @@ interface ExtractorInterface
      *
      * @return array<int, array<string, mixed>> Array of symbol data arrays
      */
-    public function extract(Node $root, string $source, string $filePath): array;
+    public function extract(Node $root, string $source, string $filePath, ?string $absolutePath = null): array;
 }

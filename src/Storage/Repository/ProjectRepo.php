@@ -112,4 +112,12 @@ final class ProjectRepo
             ['id' => $id]
         );
     }
+
+    public function updateType(int $id, ?string $type): int
+    {
+        return $this->db->execute(
+            'UPDATE projects SET type = :type WHERE id = :id',
+            ['type' => $type, 'id' => $id]
+        );
+    }
 }

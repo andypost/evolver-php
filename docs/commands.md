@@ -320,6 +320,7 @@ Use it for:
 - service ids from `*.services.yml`
 - extension metadata from `*.info.yml`
 - route refs from `*.links.*.yml`
+- Drupal asset libraries from `*.libraries.yml`
 - install/module references from `recipe.yml`
 - exported config dependencies from `db/config/*.yml`
 
@@ -330,9 +331,11 @@ make yaml-search SEARCH_TAG=<version> SEARCH_TERM=<term> [SEARCH_TYPES=type1,typ
 **Variables:**
 - `SEARCH_TAG` — Indexed version tag to search. Defaults to `INDEX_TAG`.
 - `SEARCH_TERM` — Required search term.
-- `SEARCH_TYPES` — Optional comma-separated symbol types such as `service,module_info,theme_info`.
+- `SEARCH_TYPES` — Optional comma-separated symbol types such as `service,module_info,theme_info,drupal_library`.
 - `SEARCH_DB` — Optional SQLite path. Defaults to `.data/evolver.sqlite`.
 - `SEARCH_LIMIT` — Result limit. Defaults to `50`.
+
+Asset-path searches use paths relative to the indexed root. If you indexed the whole Drupal checkout, search for `core/modules/block/js/block.admin.js`. If you indexed only `core/modules/block`, search for `js/block.admin.js`.
 
 **Examples:**
 ```bash
@@ -348,6 +351,9 @@ make yaml-search SEARCH_TAG=11.0.0 SEARCH_TYPES=module_info,theme_info SEARCH_TE
 # Find links that reference a Drupal route
 make yaml-search SEARCH_TAG=11.0.0 SEARCH_TYPES=link_task,link_contextual SEARCH_TERM=entity.block.edit_form
 
+# Find Drupal libraries that own a specific JS or CSS asset file
+make yaml-search SEARCH_TAG=11.0.0 SEARCH_TYPES=drupal_library SEARCH_TERM=core/modules/block/js/block.admin.js
+
 # Find recipe manifests that install views_ui
 make yaml-search SEARCH_TAG=11.0.0 SEARCH_TYPES=recipe_manifest SEARCH_TERM=views_ui
 ```
@@ -359,6 +365,9 @@ make yaml-search SEARCH_TAG=11.0.0 SEARCH_TYPES=service SEARCH_TERM=block.reposi
 
 # Show module info matches with dependency targets
 make yaml-search SEARCH_TAG=11.0.0 SEARCH_TYPES=module_info SEARCH_TERM=block | jq '.results[] | {fqn, file_path, dependency_targets: .metadata.dependency_targets}'
+
+# Show Drupal libraries with their resolved asset paths
+make yaml-search SEARCH_TAG=11.0.0 SEARCH_TYPES=drupal_library SEARCH_TERM=block.admin.js | jq '.results[] | {fqn, file_path, asset_paths: .metadata.asset_paths}'
 ```
 
 **Output:**
@@ -408,6 +417,9 @@ make web
 
 The UI is intended for managed branch-based scans. It lets you register Git-backed projects, save branches, queue scan jobs, inspect run history, and compare two runs for the same project.
 It also exposes the indexed knowledge base under `Versions -> Symbols`: each symbol row links to a symbol detail page, and service/class pairs show semantic links between YAML service ids and PHP implementation classes when both were indexed.
+Managed remote projects are cached under `.cache/projects/<project-slug>` by default. The shared repo lives in `repo/`, and queued scans materialize ephemeral sources in `runs/<run-id>/source`. Override the cache root with `EVOLVER_PROJECT_CACHE_DIR` if needed.
+That applies to new `git_remote` registrations. Existing stored remote project paths are still used as-is, and the initial branch-detection probe uses a temporary `/tmp/evolver_remote_detect_*` clone that is auto-cleaned.
+On a project page, the scan form compares one project branch against a Drupal core upgrade path (`from_core_version -> target_core_version`). The separate `Compare Scan Runs` page compares the findings produced by two stored runs.
 
 ---
 

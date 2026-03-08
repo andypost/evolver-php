@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace DrupalEvolver\Indexer;
 
+use DrupalEvolver\Adapter\DrupalCoreAdapter;
 use DrupalEvolver\Storage\DatabaseApi;
 use DrupalEvolver\Storage\Repository\SymbolRepo;
 use DrupalEvolver\TreeSitter\Parser;
@@ -24,7 +25,7 @@ class CoreIndexer
         private Parser $parser,
         private DatabaseApi $api,
     ) {
-        $this->classifier = new FileClassifier();
+        $this->classifier = new FileClassifier(new DrupalCoreAdapter());
         $this->workerCount = $this->api->getPath() === ':memory:' ? 1 : $this->detectCpuCount();
     }
 

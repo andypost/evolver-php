@@ -5,11 +5,38 @@ declare(strict_types=1);
 namespace DrupalEvolver\Project;
 
 use DrupalEvolver\Storage\DatabaseApi;
-use DrupalEvolver\Storage\Database;
+use DrupalEvolver\Scanner\ProjectTypeDetector;
 
 final class ManagedProjectService
 {
-    public function __construct(private DatabaseApi $api) {}
+    private ProjectTypeDetector $typeDetector;
+    private GitProjectManager $gitManager;
+
+    public function __construct(
+        private DatabaseApi $api,
+        ?ProjectTypeDetector $typeDetector = null,
+    ) {
+        $this->typeDetector = $typeDetector ?? new ProjectTypeDetector();
+        $this->gitManager = new GitProjectManager();
+    }
+
+    /**
+     * Detect project metadata from a local path.
+     * @return array{type: ?string, branches: list<string>, current_version: ?string}
+     */
+    public function detectMetadata(string $path): array
+    {
+        return $this->gitManager->detectProjectMetadata($path);
+    }
+
+    /**
+     * Detect available branches from a remote repository.
+     * @return list<string>
+     */
+    public function detectRemoteBranches(string $remoteUrl): array
+    {
+        return $this->gitManager->detectRemoteBranches($remoteUrl);
+    }
 
     #[\NoDiscard]
     public function registerLocalProject(
@@ -22,9 +49,16 @@ final class ManagedProjectService
             throw new \InvalidArgumentException(sprintf('Path does not exist: %s', $path));
         }
 
+        $realPath = realpath($path) ?: $path;
+
+        // Auto-detect type if not provided
+        if ($type === null) {
+            $type = $this->typeDetector->detect($realPath);
+        }
+
         $projectId = $this->api->projects()->save(
             $name,
-            realpath($path) ?: $path,
+            $realPath,
             $type,
             null,
             'local_path',
@@ -32,7 +66,20 @@ final class ManagedProjectService
             $defaultBranch
         );
 
-        (void) $this->api->projectBranches()->save($projectId, $defaultBranch, true);
+        $_ = $this->api->projectBranches()->save($projectId, $defaultBranch, true);
+
+        // Detect and store additional branches from git
+        $metadata = $this->detectMetadata($realPath);
+        foreach ($metadata['branches'] as $branch) {
+            if ($branch !== $defaultBranch) {
+                $_ = $this->api->projectBranches()->save($projectId, $branch, false);
+            }
+        }
+
+        // Store detected current version if available
+        if (!empty($metadata['current_version'])) {
+            $this->api->projects()->updateCoreVersion($projectId, $metadata['current_version']);
+        }
 
         return $projectId;
     }
@@ -43,11 +90,13 @@ final class ManagedProjectService
         string $remoteUrl,
         string $defaultBranch = 'main',
         ?string $type = 'module',
+        ?callable $logger = null,
     ): int {
         $slug = $this->slugify($name);
-        $dbPath = $this->api->getPath();
-        $rootBase = $dbPath === ':memory:' ? dirname(Database::defaultPath()) : dirname($dbPath);
-        $rootPath = rtrim($rootBase, '/') . '/repos/' . $slug;
+        $rootPath = rtrim($this->projectCacheBasePath(), '/') . '/' . $slug;
+
+        // Detect and store available branches from remote
+        $remoteBranches = $this->detectRemoteBranches($remoteUrl);
 
         $projectId = $this->api->projects()->save(
             $name,
@@ -59,7 +108,18 @@ final class ManagedProjectService
             $defaultBranch
         );
 
-        (void) $this->api->projectBranches()->save($projectId, $defaultBranch, true);
+        $_ = $this->api->projectBranches()->save($projectId, $defaultBranch, true);
+
+        // Store all detected remote branches
+        foreach ($remoteBranches as $branch) {
+            if ($branch !== $defaultBranch) {
+                $_ = $this->api->projectBranches()->save($projectId, $branch, false);
+            }
+        }
+
+        if ($logger !== null) {
+            $logger('info', sprintf('Detected %d branches from remote', count($remoteBranches)));
+        }
 
         return $projectId;
     }
@@ -82,5 +142,12 @@ final class ManagedProjectService
         $slug = trim($slug, '-');
 
         return $slug !== '' ? $slug : 'project';
+    }
+
+    private function projectCacheBasePath(): string
+    {
+        $configured = $_ENV['EVOLVER_PROJECT_CACHE_DIR'] ?? getenv('EVOLVER_PROJECT_CACHE_DIR') ?: '.cache/projects';
+
+        return $configured === '' ? '.cache/projects' : $configured;
     }
 }

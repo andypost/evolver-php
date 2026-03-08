@@ -5,7 +5,7 @@
         <div>
             <p class="eyebrow">Scan Run</p>
             <h1>#{{ run.id }} for {{ project.name }}</h1>
-            <p class="muted">{{ run.branch_name }} · {{ run.from_core_version ?: 'auto' }} → {{ run.target_core_version }}</p>
+            <p class="muted">{{ run.branch_name }} · Core upgrade path {{ run.from_core_version ?: 'auto-detected' }} → {{ run.target_core_version }}</p>
         </div>
         <a class="button" href="/projects/{{ project.id }}">Back to project</a>
     </section>
