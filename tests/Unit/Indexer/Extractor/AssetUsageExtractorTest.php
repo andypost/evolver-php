@@ -71,9 +71,33 @@ PHP;
         $this->assertSame('mymodule/some-lib', $symbols[0]['name']);
     }
 
-    public function testIgnoresNonPhpNonTwigFiles(): void
+    public function testExtractsFromYaml(): void
     {
-        $symbols = $this->extractor->extract('config/services.yml', 'services: {}');
+        $source = <<<YAML
+name: My Theme
+type: theme
+libraries:
+  - mytheme/global
+  - core/drupal.ajax
+dependencies:
+  - drupal:node
+YAML;
+
+        $symbols = $this->extractor->extract('mytheme.info.yml', $source);
+
+        $this->assertCount(2, $symbols);
+        $this->assertSame('library_usage', $symbols[0]['symbol_type']);
+        $this->assertSame('mytheme/global', $symbols[0]['name']);
+        $this->assertSame('yaml', $symbols[0]['language']);
+        $this->assertSame('yaml_list', json_decode($symbols[0]['metadata_json'], true)['attachment_type']);
+        $this->assertSame('library_usage', $symbols[1]['symbol_type']);
+        $this->assertSame('core/drupal.ajax', $symbols[1]['name']);
+        $this->assertSame('yaml', $symbols[1]['language']);
+    }
+
+    public function testIgnoresUnsupportedFiles(): void
+    {
+        $symbols = $this->extractor->extract('README.md', '- core/jquery');
         $this->assertSame([], $symbols);
     }
 

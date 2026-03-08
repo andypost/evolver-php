@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace DrupalEvolver\Indexer\Extractor;
 
+use DrupalEvolver\Symbol\SymbolType;
 use DrupalEvolver\TreeSitter\Node;
 use DrupalEvolver\TreeSitter\LanguageRegistry;
 use DrupalEvolver\TreeSitter\Query;
@@ -28,7 +29,7 @@ class CSSExtractor implements ExtractorInterface
             $symbols[] = [
                 'fqn' => $name,
                 'name' => $name,
-                'symbol_type' => 'css_selector',
+                'symbol_type' => SymbolType::CssSelector->value,
                 'line_start' => $node->startPoint()['row'] + 1,
                 'line_end' => $node->endPoint()['row'] + 1,
                 'signature_json' => json_encode(['type' => 'selector']),

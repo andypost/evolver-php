@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace DrupalEvolver\Differ;
 
+use DrupalEvolver\Symbol\SymbolType;
+
 class FixTemplateGenerator
 {
     /**
@@ -147,7 +149,8 @@ class FixTemplateGenerator
             return null;
         }
 
-        if (($oldSymbol['symbol_type'] ?? '') !== 'function' && ($oldSymbol['symbol_type'] ?? '') !== 'method') {
+        $symbolType = SymbolType::fromSymbol($oldSymbol);
+        if ($symbolType !== SymbolType::FunctionSymbol && $symbolType !== SymbolType::Method) {
             return null;
         }
 

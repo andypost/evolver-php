@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace DrupalEvolver\Indexer\Extractor;
 
+use DrupalEvolver\Symbol\SymbolType;
 use DrupalEvolver\TreeSitter\LanguageRegistry;
 use DrupalEvolver\TreeSitter\Node;
 use DrupalEvolver\TreeSitter\Query;
@@ -68,7 +69,7 @@ final class DrupalLibrariesExtractor implements ExtractorInterface
             $range = $ranges[$libraryName] ?? null;
             $signatureJson = $this->encodeJson($normalized);
             $metadata = [
-                'file_kind' => 'drupal_library',
+                'file_kind' => SymbolType::DrupalLibrary->value,
                 'owner' => $owner,
                 'asset_paths' => $this->uniqueStrings($assetPaths),
                 'javascript_assets' => $this->uniqueStrings($javascriptAssets),
@@ -83,10 +84,10 @@ final class DrupalLibrariesExtractor implements ExtractorInterface
 
             $symbol = [
                 'language' => 'drupal_libraries',
-                'symbol_type' => 'drupal_library',
+                'symbol_type' => SymbolType::DrupalLibrary->value,
                 'fqn' => $libraryName,
                 'name' => $libraryName,
-                'signature_hash' => hash('sha256', "drupal_library|{$libraryName}|{$signatureJson}"),
+                'signature_hash' => hash('sha256', SymbolType::DrupalLibrary->value . "|{$libraryName}|{$signatureJson}"),
                 'signature_json' => $signatureJson,
                 'metadata_json' => $this->encodeJson($metadata),
                 'source_text' => $this->encodeJson([$libraryName => $normalized]),
@@ -163,13 +164,13 @@ final class DrupalLibrariesExtractor implements ExtractorInterface
             $signatureJson = $this->encodeJson(['type' => 'library']);
             $symbols[] = [
                 'language' => 'drupal_libraries',
-                'symbol_type' => 'drupal_library',
+                'symbol_type' => SymbolType::DrupalLibrary->value,
                 'fqn' => $libraryName,
                 'name' => $libraryName,
-                'signature_hash' => hash('sha256', "drupal_library|{$libraryName}|{$signatureJson}"),
+                'signature_hash' => hash('sha256', SymbolType::DrupalLibrary->value . "|{$libraryName}|{$signatureJson}"),
                 'signature_json' => $signatureJson,
                 'metadata_json' => $this->encodeJson([
-                    'file_kind' => 'drupal_library',
+                    'file_kind' => SymbolType::DrupalLibrary->value,
                     'asset_paths' => [],
                     'javascript_assets' => [],
                     'css_assets' => [],

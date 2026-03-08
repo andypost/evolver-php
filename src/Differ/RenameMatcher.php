@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace DrupalEvolver\Differ;
 
+use DrupalEvolver\Symbol\SymbolType;
+
 class RenameMatcher
 {
     /**
@@ -49,7 +51,7 @@ class RenameMatcher
         $addedByName = [];
         
         foreach ($added as $newSymbol) {
-            $type = (string) ($newSymbol['symbol_type'] ?? 'unknown');
+            $type = SymbolType::valueFromSymbol($newSymbol, 'unknown');
             $addedByType[$type][] = $newSymbol;
             
             $sig = (string) ($newSymbol['signature_json'] ?? '');
@@ -64,7 +66,7 @@ class RenameMatcher
         }
 
         foreach ($removed as $oldSymbol) {
-            $type = (string) ($oldSymbol['symbol_type'] ?? 'unknown');
+            $type = SymbolType::valueFromSymbol($oldSymbol, 'unknown');
             $oldSig = (string) ($oldSymbol['signature_json'] ?? '');
             $oldName = $this->shortName($oldSymbol);
             
@@ -137,7 +139,7 @@ class RenameMatcher
             $matches[] = [
                 'old' => $oldSymbol,
                 'new' => $best,
-                'change_type' => ($oldSymbol['symbol_type'] ?? 'symbol') . '_renamed',
+                'change_type' => SymbolType::valueFromSymbol($oldSymbol, 'symbol') . '_renamed',
                 'confidence' => $bestScore,
             ];
         }

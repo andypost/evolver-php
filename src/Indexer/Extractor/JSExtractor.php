@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace DrupalEvolver\Indexer\Extractor;
 
+use DrupalEvolver\Symbol\SymbolType;
 use DrupalEvolver\TreeSitter\Node;
 use DrupalEvolver\TreeSitter\LanguageRegistry;
 use DrupalEvolver\TreeSitter\Query;
@@ -28,17 +29,17 @@ class JSExtractor implements ExtractorInterface
             $name = $nameNode ? $nameNode->text() : 'anonymous';
 
             $symbolType = match($type) {
-                'function_declaration' => 'function',
-                'variable_declarator' => 'variable',
-                'class_declaration' => 'class',
-                'method_definition' => 'method',
-                default => 'js_symbol',
+                'function_declaration' => SymbolType::FunctionSymbol,
+                'variable_declarator' => SymbolType::Variable,
+                'class_declaration' => SymbolType::ClassSymbol,
+                'method_definition' => SymbolType::Method,
+                default => SymbolType::JsSymbol,
             };
 
             $symbols[] = [
                 'fqn' => $name,
                 'name' => $name,
-                'symbol_type' => $symbolType,
+                'symbol_type' => $symbolType->value,
                 'line_start' => $node->startPoint()['row'] + 1,
                 'line_end' => $node->endPoint()['row'] + 1,
                 'signature_json' => json_encode(['type' => $type]),

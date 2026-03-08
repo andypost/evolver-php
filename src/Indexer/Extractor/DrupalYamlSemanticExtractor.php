@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace DrupalEvolver\Indexer\Extractor;
 
+use DrupalEvolver\Symbol\SymbolType;
 use Symfony\Component\Yaml\Exception\ParseException;
 use Symfony\Component\Yaml\Tag\TaggedValue;
 use Symfony\Component\Yaml\Yaml;
@@ -29,17 +30,17 @@ final class DrupalYamlSemanticExtractor
         $symbolType = $this->resolveSymbolType($filePath, $data);
 
         return match ($symbolType) {
-            'module_info', 'theme_info', 'profile_info', 'theme_engine_info' => [
+            SymbolType::ModuleInfo, SymbolType::ThemeInfo, SymbolType::ProfileInfo, SymbolType::ThemeEngineInfo => [
                 $this->buildInfoSymbol($symbolType, $data, $source, $filePath),
             ],
-            'sdc_component' => [
+            SymbolType::SdcComponent => [
                 $this->buildSdcComponentSymbol($data, $source, $absolutePath ?? $filePath),
             ],
-            'link_menu', 'link_task', 'link_action', 'link_contextual' => $this->buildLinkSymbols($symbolType, $data, $source),
-            'config_export' => [
+            SymbolType::LinkMenu, SymbolType::LinkTask, SymbolType::LinkAction, SymbolType::LinkContextual => $this->buildLinkSymbols($symbolType, $data, $source),
+            SymbolType::ConfigExport => [
                 $this->buildConfigExportSymbol($data, $source, $filePath),
             ],
-            'recipe_manifest' => [
+            SymbolType::RecipeManifest => [
                 $this->buildRecipeManifestSymbol($data, $source, $filePath),
             ],
             default => null,
@@ -57,7 +58,7 @@ final class DrupalYamlSemanticExtractor
         $normalized = $this->normalizeValue($data);
 
         $metadata = [
-            'file_kind' => 'sdc_component',
+            'file_kind' => SymbolType::SdcComponent->value,
             'label' => $this->stringOrNull($data['name'] ?? null),
             'description' => $this->stringOrNull($data['description'] ?? null),
             'status' => $this->stringOrNull($data['status'] ?? 'stable'),
@@ -69,7 +70,7 @@ final class DrupalYamlSemanticExtractor
             'library' => $data['library'] ?? null,
         ];
 
-        return $this->buildSymbol('sdc_component', $componentId, $source, $normalized, $metadata);
+        return $this->buildSymbol(SymbolType::SdcComponent, $componentId, $source, $normalized, $metadata);
     }
 
     private function supports(string $filePath): bool
@@ -99,34 +100,39 @@ final class DrupalYamlSemanticExtractor
     /**
      * @param array<string, mixed> $data
      */
-    private function resolveSymbolType(string $filePath, array $data): ?string
+    private function resolveSymbolType(string $filePath, array $data): ?SymbolType
     {
         $path = $this->normalizePath($filePath);
         $basename = basename($path);
 
         if (str_ends_with($basename, '.info.yml')) {
             return match (strtolower((string) ($data['type'] ?? 'module'))) {
-                'theme' => 'theme_info',
-                'profile' => 'profile_info',
-                'theme_engine' => 'theme_engine_info',
-                default => 'module_info',
+                'theme' => SymbolType::ThemeInfo,
+                'profile' => SymbolType::ProfileInfo,
+                'theme_engine' => SymbolType::ThemeEngineInfo,
+                default => SymbolType::ModuleInfo,
             };
         }
 
         if (str_ends_with($basename, '.component.yml')) {
-            return 'sdc_component';
+            return SymbolType::SdcComponent;
         }
 
         if (preg_match('/\.links\.(menu|task|action|contextual)\.yml$/', $basename, $matches)) {
-            return 'link_' . $matches[1];
+            return match ($matches[1]) {
+                'menu' => SymbolType::LinkMenu,
+                'task' => SymbolType::LinkTask,
+                'action' => SymbolType::LinkAction,
+                'contextual' => SymbolType::LinkContextual,
+            };
         }
 
         if ($basename === 'recipe.yml') {
-            return 'recipe_manifest';
+            return SymbolType::RecipeManifest;
         }
 
         if ($this->isConfigExportPath($path)) {
-            return 'config_export';
+            return SymbolType::ConfigExport;
         }
 
         return null;
@@ -136,14 +142,14 @@ final class DrupalYamlSemanticExtractor
      * @param array<string, mixed> $data
      * @return array<string, mixed>
      */
-    private function buildInfoSymbol(string $symbolType, array $data, string $source, string $filePath): array
+    private function buildInfoSymbol(SymbolType $symbolType, array $data, string $source, string $filePath): array
     {
         $extensionId = basename(basename($filePath), '.info.yml');
         $normalized = $this->normalizeValue($data);
         $dependencies = $this->extractStringList($data['dependencies'] ?? []);
         $dependencyTargets = $this->extractDependencyTargets($dependencies);
         $metadata = [
-            'file_kind' => $symbolType,
+            'file_kind' => $symbolType->value,
             'label' => $this->stringOrNull($data['name'] ?? null),
             'declared_type' => strtolower((string) ($data['type'] ?? 'module')),
             'dependencies' => $dependencies,
@@ -160,7 +166,7 @@ final class DrupalYamlSemanticExtractor
      * @param array<string, mixed> $data
      * @return array<int, array<string, mixed>>
      */
-    private function buildLinkSymbols(string $symbolType, array $data, string $source): array
+    private function buildLinkSymbols(SymbolType $symbolType, array $data, string $source): array
     {
         $symbols = [];
 
@@ -172,7 +178,7 @@ final class DrupalYamlSemanticExtractor
             $normalized = $this->normalizeValue(is_array($entry) ? $entry : ['value' => $entry]);
             $entryArray = is_array($entry) ? $entry : [];
             $metadata = [
-                'file_kind' => $symbolType,
+                'file_kind' => $symbolType->value,
                 'title' => $this->stringOrNull($entryArray['title'] ?? null),
                 'description' => $this->stringOrNull($entryArray['description'] ?? null),
                 'route_name' => $this->stringOrNull($entryArray['route_name'] ?? null),
@@ -203,7 +209,7 @@ final class DrupalYamlSemanticExtractor
         $normalized = $this->normalizeConfigExportData($data);
         $dependencies = $normalized['dependencies'] ?? [];
         $metadata = [
-            'file_kind' => 'config_export',
+            'file_kind' => SymbolType::ConfigExport->value,
             'top_level_keys' => array_keys($normalized),
             'dependency_modules' => $this->extractStringList($dependencies['module'] ?? []),
             'dependency_themes' => $this->extractStringList($dependencies['theme'] ?? []),
@@ -211,7 +217,7 @@ final class DrupalYamlSemanticExtractor
             'skipped_keys' => ['uuid', 'langcode', '_core.default_config_hash'],
         ];
 
-        return $this->buildSymbol('config_export', $configName, $source, $normalized, $metadata);
+        return $this->buildSymbol(SymbolType::ConfigExport, $configName, $source, $normalized, $metadata);
     }
 
     /**
@@ -228,7 +234,7 @@ final class DrupalYamlSemanticExtractor
         $install = $this->extractStringList($data['install'] ?? []);
         $recipes = $this->extractStringList($data['recipes'] ?? []);
         $metadata = [
-            'file_kind' => 'recipe_manifest',
+            'file_kind' => SymbolType::RecipeManifest->value,
             'label' => $this->stringOrNull($data['name'] ?? null),
             'recipe_type' => $this->stringOrNull($data['type'] ?? null),
             'install' => $install,
@@ -236,7 +242,7 @@ final class DrupalYamlSemanticExtractor
             'mentioned_extensions' => $this->uniqueStrings($install),
         ];
 
-        return $this->buildSymbol('recipe_manifest', $recipeId, $source, $normalized, $metadata);
+        return $this->buildSymbol(SymbolType::RecipeManifest, $recipeId, $source, $normalized, $metadata);
     }
 
     /**
@@ -244,17 +250,17 @@ final class DrupalYamlSemanticExtractor
      * @param array<string, mixed> $metadata
      * @return array<string, mixed>
      */
-    private function buildSymbol(string $symbolType, string $name, string $source, array $signature, array $metadata): array
+    private function buildSymbol(SymbolType $symbolType, string $name, string $source, array $signature, array $metadata): array
     {
         $signatureJson = $this->encodeJson($signature);
         $metadataJson = $this->encodeJson($metadata);
 
         return [
             'language' => 'yaml',
-            'symbol_type' => $symbolType,
+            'symbol_type' => $symbolType->value,
             'fqn' => $name,
             'name' => $name,
-            'signature_hash' => hash('sha256', "{$symbolType}|{$name}|{$signatureJson}"),
+            'signature_hash' => hash('sha256', "{$symbolType->value}|{$name}|{$signatureJson}"),
             'signature_json' => $signatureJson,
             'metadata_json' => $metadataJson,
             'source_text' => $this->encodeJson([$name => $signature]),

@@ -1,0 +1,443 @@
+/* Scan Results UI */
+.match-list {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    margin-top: 1rem;
+}
+
+.match-item {
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.4);
+    overflow: hidden;
+    transition: border-color 0.2s ease;
+}
+
+.match-item:hover {
+    border-color: var(--accent);
+    background: rgba(255, 255, 255, 0.7);
+}
+
+.match-header {
+    background: rgba(0, 0, 0, 0.02);
+    padding: 0.75rem 1.25rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    border-bottom: 1px solid var(--line);
+}
+
+.match-file {
+    font-size: 0.85rem;
+    color: var(--muted);
+}
+
+.match-body {
+    padding: 1.25rem;
+}
+
+.match-body h3 {
+    margin: 0 0 0.75rem 0;
+    font-size: 1.1rem;
+    font-family: inherit;
+}
+
+.migration-advice {
+    background: rgba(11, 110, 79, 0.06);
+    border-left: 4px solid var(--accent);
+    padding: 1rem;
+    margin: 1rem 0;
+    font-size: 0.95rem;
+    line-height: 1.6;
+    border-radius: 0 8px 8px 0;
+}
+
+.diff-block {
+    background: #1e1e1e;
+    color: #d4d4d4;
+    padding: 1rem;
+    border-radius: 8px;
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 0.85rem;
+    margin-top: 0.75rem;
+    line-height: 1.5;
+    overflow-x: auto;
+}
+
+.diff-line {
+    white-space: pre;
+}
+
+.diff-plus { color: #4ec9b0; }
+.diff-minus { color: #f44747; }
+.diff-change { color: #ce9178; }
+
+.status-tag.status-breaking { background: #fee2e2; color: #991b1b; }
+.status-tag.status-deprecation { background: #fef9c3; color: #854d0e; }
+.status-tag.status-removal { background: #f3f4f6; color: #1f2937; }
+
+.impact-high {
+    background: rgba(217, 93, 57, 0.04);
+}
+
+.impact-high td {
+    border-left: 4px solid var(--accent-2);
+}
+
+/* Match Header Enhancement */
+.match-header {
+    cursor: pointer;
+    transition: background-color 0.2s ease;
+}
+
+.match-header:hover {
+    background-color: rgba(11, 110, 79, 0.04);
+}
+
+.match-header-left,
+.match-header-right {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+.preview-hint {
+    font-size: 0.75rem;
+    color: var(--muted);
+    opacity: 0;
+    transition: opacity 0.2s ease;
+}
+
+.match-header:hover .preview-hint {
+    opacity: 1;
+}
+
+.preview-icon {
+    font-size: 0.7rem;
+    color: var(--muted);
+    transition: transform 0.2s ease;
+}
+
+.match-header.preview-open .preview-icon {
+    transform: rotate(180deg);
+}
+
+/* Code Preview Panel */
+.code-preview {
+    border-top: 1px solid var(--line);
+    background: #fafafa;
+}
+
+.code-loading,
+.code-error {
+    padding: 1rem;
+    text-align: center;
+    color: var(--muted);
+    font-size: 0.9rem;
+}
+
+.code-error {
+    color: var(--accent-2);
+}
+
+.code-preview-content {
+    background: #ffffff;
+}
+
+.code-file-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.5rem 1rem;
+    background: #f0f0f0;
+    border-bottom: 1px solid var(--line);
+    font-size: 0.85rem;
+}
+
+.code-line-range {
+    color: var(--muted);
+    font-size: 0.75rem;
+}
+
+.code-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 0.82rem;
+    line-height: 1.5;
+}
+
+.code-table tr {
+    border-bottom: 1px solid #f0f0f0;
+}
+
+.code-table tr.highlight-line {
+    background: rgba(217, 93, 57, 0.08);
+}
+
+.code-table td {
+    padding: 0;
+    vertical-align: top;
+}
+
+.line-number {
+    width: 50px;
+    text-align: right;
+    padding: 0.25rem 0.75rem;
+    color: var(--muted);
+    background: #fafafa;
+    border-right: 1px solid #e0e0e0;
+    user-select: none;
+}
+
+.highlight-line .line-number {
+    background: rgba(217, 93, 57, 0.12);
+    font-weight: 500;
+}
+
+.line-content {
+    padding: 0.25rem 1rem;
+    white-space: pre-wrap;
+    word-break: break-all;
+}
+
+/* Extension Link */
+.extension-link {
+    text-decoration: none;
+    transition: opacity 0.2s ease;
+}
+
+.extension-link:hover {
+    opacity: 0.7;
+}
+
+.extension-link code {
+    color: var(--accent);
+}
+
+/* Advanced Filter Sidebar */
+.filter-sidebar {
+    position: fixed;
+    top: 0;
+    right: 0;
+    width: 320px;
+    height: 100vh;
+    background: var(--panel);
+    border-left: 1px solid var(--line);
+    box-shadow: -4px 0 20px rgba(0, 0, 0, 0.1);
+    z-index: 100;
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+}
+
+.filter-sidebar-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1.25rem;
+    border-bottom: 1px solid var(--line);
+    background: rgba(255, 248, 238, 0.82);
+}
+
+.filter-sidebar-header h3 {
+    margin: 0;
+    font-size: 1.2rem;
+}
+
+.filter-close {
+    background: none;
+    border: none;
+    font-size: 1.5rem;
+    cursor: pointer;
+    padding: 0.25rem 0.5rem;
+    color: var(--muted);
+    transition: color 0.2s ease;
+}
+
+.filter-close:hover {
+    color: var(--ink);
+}
+
+.filter-sections {
+    flex: 1;
+    padding: 1rem;
+}
+
+.filter-section {
+    margin-bottom: 1rem;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+.filter-section summary {
+    padding: 0.75rem 1rem;
+    cursor: pointer;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: rgba(255, 255, 255, 0.5);
+    user-select: none;
+}
+
+.filter-section summary:hover {
+    background: rgba(255, 255, 255, 0.8);
+}
+
+.filter-section-title {
+    font-weight: 500;
+}
+
+.filter-count {
+    font-size: 0.75rem;
+    color: var(--muted);
+    background: rgba(11, 110, 79, 0.1);
+    padding: 0.15rem 0.5rem;
+    border-radius: 999px;
+}
+
+.filter-options {
+    padding: 0.75rem 1rem;
+    background: rgba(255, 255, 255, 0.3);
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.filter-option {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    cursor: pointer;
+    padding: 0.4rem 0.5rem;
+    border-radius: 4px;
+    transition: background 0.2s ease;
+}
+
+.filter-option:hover {
+    background: rgba(11, 110, 79, 0.05);
+}
+
+.filter-option input[type="checkbox"] {
+    cursor: pointer;
+}
+
+.severity-indicator {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    display: inline-block;
+}
+
+.severity-indicator.breaking {
+    background: #ef4444;
+}
+
+.severity-indicator.deprecation {
+    background: #f59e0b;
+}
+
+.severity-indicator.modernization {
+    background: #3b82f6;
+}
+
+.filter-text-input {
+    width: 100%;
+    padding: 0.6rem;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    font-family: inherit;
+    font-size: 0.9rem;
+}
+
+.filter-text-input:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(11, 110, 79, 0.1);
+}
+
+.filter-sidebar-footer {
+    padding: 1rem;
+    border-top: 1px solid var(--line);
+    background: rgba(255, 248, 238, 0.82);
+    display: flex;
+    gap: 0.5rem;
+}
+
+.filter-sidebar-footer .button {
+    flex: 1;
+}
+
+/* Active Filters Display */
+.active-filters {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    padding: 0.75rem 1rem;
+    background: rgba(11, 110, 79, 0.05);
+    border-radius: 8px;
+    margin-bottom: 1rem;
+    flex-wrap: wrap;
+}
+
+.active-filters-list {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    flex: 1;
+}
+
+.active-filter-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.3rem 0.6rem;
+    background: white;
+    border: 1px solid var(--line);
+    border-radius: 20px;
+    font-size: 0.82rem;
+}
+
+.active-filter-tag-remove {
+    cursor: pointer;
+    color: var(--muted);
+    font-weight: bold;
+}
+
+.active-filter-tag-remove:hover {
+    color: var(--accent-2);
+}
+
+.filter-count-badge {
+    background: var(--accent-2);
+    color: white;
+    font-size: 0.7rem;
+    padding: 0.1rem 0.4rem;
+    border-radius: 999px;
+    margin-left: 0.3rem;
+}
+
+/* Overlay when sidebar is open */
+#filter-sidebar-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.3);
+    z-index: 99;
+    display: none;
+}
+
+#filter-sidebar-overlay.active {
+    display: block;
+}
+
+.success {
+    background: #dcfce7 !important;
+    color: #166534 !important;
+}
+

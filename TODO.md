@@ -64,21 +64,25 @@ Top priority: custom modules, custom themes, custom profiles, and site-level app
 - realistic target: catch a large share of framework-driven breakage before runtime
 - low value for pure business-logic regressions with unchanged API shape
 
-### Phase 1 UI Enhancements Needed
+### Phase 1 UI Enhancements
 
-The backend for Phase 1.2 and 1.3 is largely complete, but the UI needs enhancements to expose this functionality:
+#### Completed
+- [x] Project metadata display (`package_name`, `root_name` in dashboard and project detail)
+- [x] Project type badges (colored pills for drupal-module, drupal-theme, etc.)
+- [x] Modernization filter (severity/category/fixability/change type sidebar)
+- [x] Per-extension drill-down (`extension-detail.twig`)
+- [x] Code preview panel (click-to-expand on match items)
+- [x] Advanced filtering (`filter-sidebar.twig`, `active-filters.twig`, `matches.js`)
+- [x] Language-grouped symbol distribution cards on version detail
+- [x] Symbols browser with language/type filtering
+- [x] Match item fragment extraction (`match-item.twig` shared across views)
+- [x] Inline JS moved to `app.js` and `matches.js`
 
-#### Missing UI Features
-- [x] **Project metadata display** - Show `package_name` and `root_name` in project detail and dashboard ✅ DONE
-- [x] **Project type badges** - Visual indicators (icon + color) for drupal-module, drupal-theme, etc. ✅ DONE
-- [x] **Modernization filter** - Quick filter to show only modernization suggestions ✅ DONE
-- [x] **Per-extension drill-down** - Click an extension in grouping view to get dedicated page with just that extension's findings ✅ DONE
-- [x] **Code preview panel** - Show actual source code snippets for matches (with syntax highlighting) ✅ DONE
-- [x] **Advanced filtering** - Collapsible sidebar with severity, category, fixability, change type, and file pattern filters ✅ DONE
-- [ ] **Bulk apply fixes** - UI to select and apply multiple auto-fixable changes at once
-- [ ] **Export results** - Download scan results as JSON/CSV/markdown report
-- [ ] **Diff visualization** - Inline diff display for signature changes (already partially in template, could be enhanced)
-- [ ] **Extension dependency graph** - Visual representation of extension dependencies and impact
+#### Remaining (Phase 2+)
+- [ ] Bulk apply fixes
+- [ ] Export results (JSON/CSV/markdown)
+- [ ] Enhanced diff visualization
+- [ ] Extension dependency graph
 
 ### Phase 1 Completion Checklist
 

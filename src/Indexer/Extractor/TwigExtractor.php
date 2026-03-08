@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace DrupalEvolver\Indexer\Extractor;
 
+use DrupalEvolver\Symbol\SymbolType;
 use DrupalEvolver\TreeSitter\Node;
 use DrupalEvolver\TreeSitter\LanguageRegistry;
 use DrupalEvolver\TreeSitter\Query;
@@ -26,7 +27,7 @@ class TwigExtractor implements ExtractorInterface
 
             $type = $node->type();
             $name = 'anonymous';
-            $symbolType = 'twig_symbol';
+            $symbolType = SymbolType::TwigSymbol;
 
             if ($type === 'tag_statement') {
                 foreach ($node->namedChildren() as $child) {
@@ -42,14 +43,14 @@ class TwigExtractor implements ExtractorInterface
                 // Refine SDC references
                 if (str_contains($name, ':')) {
                     $symbolType = match($symbolType) {
-                        'twig_include' => 'sdc_include',
-                        'twig_embed' => 'sdc_embed',
-                        'twig_component' => 'sdc_call',
+                        SymbolType::TwigInclude => SymbolType::SdcInclude,
+                        SymbolType::TwigEmbed => SymbolType::SdcEmbed,
+                        SymbolType::TwigComponent => SymbolType::SdcCall,
                         default => $symbolType,
                     };
                 }
             } elseif ($type === 'output_directive') {
-                $symbolType = 'twig_variable';
+                $symbolType = SymbolType::TwigVariable;
                 foreach ($node->namedChildren() as $child) {
                     if ($child->type() === 'variable') {
                         $name = $child->text();
@@ -57,7 +58,7 @@ class TwigExtractor implements ExtractorInterface
                     }
                 }
             } elseif ($type === 'filter') {
-                $symbolType = 'twig_filter';
+                $symbolType = SymbolType::TwigFilter;
                 foreach ($node->namedChildren() as $child) {
                     if ($child->type() === 'filter_identifier') {
                         $name = $child->text();
@@ -65,7 +66,7 @@ class TwigExtractor implements ExtractorInterface
                     }
                 }
             } elseif ($type === 'function_call') {
-                $symbolType = 'twig_function';
+                $symbolType = SymbolType::TwigFunction;
                 foreach ($node->namedChildren() as $child) {
                     if ($child->type() === 'function_identifier') {
                         $name = $child->text();
@@ -82,7 +83,7 @@ class TwigExtractor implements ExtractorInterface
                                 $found = $this->findFirstString($arg);
                                 if ($found) {
                                     $name = $found;
-                                    $symbolType = 'sdc_function';
+                                    $symbolType = SymbolType::SdcFunction;
                                     break 2;
                                 }
                             }
@@ -94,7 +95,7 @@ class TwigExtractor implements ExtractorInterface
             $symbols[] = [
                 'fqn' => $name,
                 'name' => $name,
-                'symbol_type' => $symbolType,
+                'symbol_type' => $symbolType->value,
                 'line_start' => $node->startPoint()['row'] + 1,
                 'line_end' => $node->endPoint()['row'] + 1,
                 'signature_json' => json_encode(['type' => $type, 'raw' => $node->text()]),
@@ -125,19 +126,19 @@ class TwigExtractor implements ExtractorInterface
         return $this->query;
     }
 
-    private function resolveTagType(Node $node): string
+    private function resolveTagType(Node $node): SymbolType
     {
         $text = trim($node->text());
         return match($text) {
-            'include' => 'twig_include',
-            'embed' => 'twig_embed',
-            'extends' => 'twig_extends',
-            'component' => 'twig_component',
-            'block' => 'twig_block',
-            'set' => 'twig_set',
-            'for' => 'twig_for',
-            'if' => 'twig_if',
-            default => 'twig_tag',
+            'include' => SymbolType::TwigInclude,
+            'embed' => SymbolType::TwigEmbed,
+            'extends' => SymbolType::TwigExtends,
+            'component' => SymbolType::TwigComponent,
+            'block' => SymbolType::TwigBlock,
+            'set' => SymbolType::TwigSet,
+            'for' => SymbolType::TwigFor,
+            'if' => SymbolType::TwigIf,
+            default => SymbolType::TwigTag,
         };
     }
 

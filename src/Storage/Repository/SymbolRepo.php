@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace DrupalEvolver\Storage\Repository;
 
 use DrupalEvolver\Storage\Database;
+use DrupalEvolver\Symbol\SymbolType;
 
 class SymbolRepo
 {
@@ -226,7 +227,7 @@ class SymbolRepo
     }
 
     #[\NoDiscard]
-    public function findByTypeAndVersion(int $versionId, string $symbolType): array
+    public function findByTypeAndVersion(int $versionId, SymbolType $symbolType): array
     {
         return $this->db->query(
             'SELECT s.*, f.file_path
@@ -234,7 +235,7 @@ class SymbolRepo
              JOIN parsed_files f ON s.file_id = f.id
              WHERE s.version_id = :vid AND s.symbol_type = :type
              ORDER BY s.fqn',
-            ['vid' => $versionId, 'type' => $symbolType]
+            ['vid' => $versionId, 'type' => $symbolType->value]
         )->fetchAll();
     }
 }

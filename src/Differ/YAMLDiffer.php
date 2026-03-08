@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace DrupalEvolver\Differ;
 
+use DrupalEvolver\Symbol\SymbolType;
+
 class YAMLDiffer
 {
     /**
@@ -19,7 +21,12 @@ class YAMLDiffer
                 continue;
             }
 
-            $changeType = $this->removalChangeType((string) ($symbol['symbol_type'] ?? ''));
+            $symbolType = SymbolType::fromSymbol($symbol);
+            if ($symbolType === null) {
+                continue;
+            }
+
+            $changeType = $this->removalChangeType($symbolType);
             if ($changeType === null) {
                 continue;
             }
@@ -80,10 +87,11 @@ class YAMLDiffer
                 $usedAdded[$bestKey] = true;
             }
 
+            $symbolType = SymbolType::fromSymbol($oldSymbol);
             $changes[] = [
                 'old' => $oldSymbol,
                 'new' => $best,
-                'change_type' => $this->renameChangeType((string) ($oldSymbol['symbol_type'] ?? '')),
+                'change_type' => $symbolType === null ? 'symbol_renamed' : $this->renameChangeType($symbolType),
                 'severity' => 'breaking',
                 'confidence' => $bestScore,
             ];
@@ -136,7 +144,7 @@ class YAMLDiffer
             return false;
         }
 
-        if (($old['symbol_type'] ?? null) !== ($new['symbol_type'] ?? null)) {
+        if (SymbolType::valueFromSymbol($old) !== SymbolType::valueFromSymbol($new)) {
             return false;
         }
 
@@ -215,35 +223,35 @@ class YAMLDiffer
         return max(0.0, min(1.0, $normalized));
     }
 
-    private function removalChangeType(string $symbolType): ?string
+    private function removalChangeType(SymbolType $symbolType): ?string
     {
         return match ($symbolType) {
-            'service' => 'service_removed',
-            'route' => 'route_removed',
-            'permission' => 'permission_removed',
-            'config_schema' => 'config_key_removed',
-            'module_info' => 'module_info_removed',
-            'theme_info' => 'theme_info_removed',
-            'profile_info' => 'profile_info_removed',
-            'theme_engine_info' => 'theme_engine_info_removed',
-            'link_menu' => 'link_menu_removed',
-            'link_task' => 'link_task_removed',
-            'link_action' => 'link_action_removed',
-            'link_contextual' => 'link_contextual_removed',
-            'config_export' => 'config_object_removed',
-            'recipe_manifest' => 'recipe_removed',
+            SymbolType::Service => 'service_removed',
+            SymbolType::Route, SymbolType::DrupalRoute => 'route_removed',
+            SymbolType::Permission, SymbolType::DrupalPermission => 'permission_removed',
+            SymbolType::ConfigSchema => 'config_key_removed',
+            SymbolType::ModuleInfo => 'module_info_removed',
+            SymbolType::ThemeInfo => 'theme_info_removed',
+            SymbolType::ProfileInfo => 'profile_info_removed',
+            SymbolType::ThemeEngineInfo => 'theme_engine_info_removed',
+            SymbolType::LinkMenu => 'link_menu_removed',
+            SymbolType::LinkTask => 'link_task_removed',
+            SymbolType::LinkAction => 'link_action_removed',
+            SymbolType::LinkContextual => 'link_contextual_removed',
+            SymbolType::ConfigExport => 'config_object_removed',
+            SymbolType::RecipeManifest => 'recipe_removed',
             default => null,
         };
     }
 
-    private function renameChangeType(string $symbolType): string
+    private function renameChangeType(SymbolType $symbolType): string
     {
         return match ($symbolType) {
-            'service' => 'service_renamed',
-            'config_schema' => 'config_key_renamed',
-            'config_export' => 'config_object_renamed',
-            'recipe_manifest' => 'recipe_renamed',
-            default => $symbolType . '_renamed',
+            SymbolType::Service => 'service_renamed',
+            SymbolType::ConfigSchema => 'config_key_renamed',
+            SymbolType::ConfigExport => 'config_object_renamed',
+            SymbolType::RecipeManifest => 'recipe_renamed',
+            default => $symbolType->value . '_renamed',
         };
     }
 
@@ -253,22 +261,25 @@ class YAMLDiffer
      */
     private function changedChangeType(array $old, array $new): ?string
     {
-        $symbolType = (string) ($old['symbol_type'] ?? '');
+        $symbolType = SymbolType::fromSymbol($old);
+        if ($symbolType === null) {
+            return null;
+        }
 
         return match ($symbolType) {
-            'service' => $this->serviceChangeType($old, $new),
-            'route' => 'route_changed',
-            'library' => 'library_changed',
-            'module_info' => $this->infoChangeType($symbolType, $old, $new),
-            'profile_info' => $this->infoChangeType($symbolType, $old, $new),
-            'theme_info' => $this->infoChangeType($symbolType, $old, $new),
-            'theme_engine_info' => 'theme_engine_info_changed',
-            'link_menu' => 'link_menu_changed',
-            'link_task' => 'link_task_changed',
-            'link_action' => 'link_action_changed',
-            'link_contextual' => 'link_contextual_changed',
-            'config_export' => 'config_object_changed',
-            'recipe_manifest' => $this->recipeChangeType($old, $new),
+            SymbolType::Service => $this->serviceChangeType($old, $new),
+            SymbolType::Route, SymbolType::DrupalRoute => 'route_changed',
+            SymbolType::Library, SymbolType::DrupalLibrary => 'library_changed',
+            SymbolType::ModuleInfo => $this->infoChangeType($symbolType, $old, $new),
+            SymbolType::ProfileInfo => $this->infoChangeType($symbolType, $old, $new),
+            SymbolType::ThemeInfo => $this->infoChangeType($symbolType, $old, $new),
+            SymbolType::ThemeEngineInfo => 'theme_engine_info_changed',
+            SymbolType::LinkMenu => 'link_menu_changed',
+            SymbolType::LinkTask => 'link_task_changed',
+            SymbolType::LinkAction => 'link_action_changed',
+            SymbolType::LinkContextual => 'link_contextual_changed',
+            SymbolType::ConfigExport => 'config_object_changed',
+            SymbolType::RecipeManifest => $this->recipeChangeType($old, $new),
             default => null,
         };
     }
@@ -298,12 +309,12 @@ class YAMLDiffer
      */
     private function buildDiffDetails(array $old, array $new): array
     {
-        $symbolType = (string) ($old['symbol_type'] ?? '');
+        $symbolType = SymbolType::fromSymbol($old);
         $oldSig = $this->decodeSignature($old);
         $newSig = $this->decodeSignature($new);
 
         return match ($symbolType) {
-            'service' => [
+            SymbolType::Service => [
                 'old_class' => $oldSig['class'] ?? null,
                 'new_class' => $newSig['class'] ?? null,
                 'old_arguments' => $oldSig['arguments'] ?? null,
@@ -311,16 +322,16 @@ class YAMLDiffer
                 'old_tags' => $oldSig['tags'] ?? null,
                 'new_tags' => $newSig['tags'] ?? null,
             ],
-            'route' => [
+            SymbolType::Route, SymbolType::DrupalRoute => [
                 'old_path' => $oldSig['path'] ?? null,
                 'new_path' => $newSig['path'] ?? null,
                 'old_controller' => $oldSig['controller'] ?? null,
                 'new_controller' => $newSig['controller'] ?? null,
             ],
-            'module_info', 'profile_info', 'theme_info', 'theme_engine_info' => $this->buildInfoDiffDetails($oldSig, $newSig),
-            'link_menu', 'link_task', 'link_action', 'link_contextual' => $this->buildStructuredDiffDetails($oldSig, $newSig),
-            'config_export' => $this->buildConfigDiffDetails($oldSig, $newSig),
-            'recipe_manifest' => $this->buildRecipeDiffDetails($oldSig, $newSig),
+            SymbolType::ModuleInfo, SymbolType::ProfileInfo, SymbolType::ThemeInfo, SymbolType::ThemeEngineInfo => $this->buildInfoDiffDetails($oldSig, $newSig),
+            SymbolType::LinkMenu, SymbolType::LinkTask, SymbolType::LinkAction, SymbolType::LinkContextual => $this->buildStructuredDiffDetails($oldSig, $newSig),
+            SymbolType::ConfigExport => $this->buildConfigDiffDetails($oldSig, $newSig),
+            SymbolType::RecipeManifest => $this->buildRecipeDiffDetails($oldSig, $newSig),
             default => [
                 'old_signature' => $oldSig,
                 'new_signature' => $newSig,
@@ -332,7 +343,7 @@ class YAMLDiffer
      * @param array<string, mixed> $old
      * @param array<string, mixed> $new
      */
-    private function infoChangeType(string $symbolType, array $old, array $new): string
+    private function infoChangeType(SymbolType $symbolType, array $old, array $new): string
     {
         $oldSig = $this->decodeSignature($old);
         $newSig = $this->decodeSignature($new);
@@ -341,17 +352,17 @@ class YAMLDiffer
 
         if ($oldDeps !== $newDeps) {
             return match ($symbolType) {
-                'module_info' => 'module_dependencies_changed',
-                'profile_info' => 'profile_dependencies_changed',
-                default => $symbolType . '_changed',
+                SymbolType::ModuleInfo => 'module_dependencies_changed',
+                SymbolType::ProfileInfo => 'profile_dependencies_changed',
+                default => $symbolType->value . '_changed',
             };
         }
 
-        if ($symbolType === 'theme_info' && ($oldSig['base theme'] ?? null) !== ($newSig['base theme'] ?? null)) {
+        if ($symbolType === SymbolType::ThemeInfo && ($oldSig['base theme'] ?? null) !== ($newSig['base theme'] ?? null)) {
             return 'theme_base_changed';
         }
 
-        return $symbolType . '_changed';
+        return $symbolType->value . '_changed';
     }
 
     /**

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace DrupalEvolver\Indexer\Extractor;
 
 use DrupalEvolver\Adapter\EcosystemAdapterInterface;
+use DrupalEvolver\Symbol\SymbolType;
 use DrupalEvolver\TreeSitter\Node;
 
 class PHPExtractor implements ExtractorInterface
@@ -123,6 +124,8 @@ class PHPExtractor implements ExtractorInterface
             return;
         }
 
+        $symbolType = $this->resolveClassLikeSymbolType($type);
+
         $shortName = $name->text();
         $fqn = $this->currentNamespace ? $this->currentNamespace . '\\' . $shortName : $shortName;
 
@@ -144,12 +147,14 @@ class PHPExtractor implements ExtractorInterface
         }
 
         $docblock = $this->findDocblock($node);
-        $sigJson = $type === 'class' ? json_encode(['parent' => $parentClass, 'interfaces' => $interfacesText]) : null;
-        $hashData = $type === 'class' ? "class|{$fqn}|{$parentClass}|{$interfacesText}" : "{$type}|{$fqn}";
+        $sigJson = $symbolType === SymbolType::ClassSymbol ? json_encode(['parent' => $parentClass, 'interfaces' => $interfacesText]) : null;
+        $hashData = $symbolType === SymbolType::ClassSymbol
+            ? SymbolType::ClassSymbol->value . "|{$fqn}|{$parentClass}|{$interfacesText}"
+            : "{$symbolType->value}|{$fqn}";
 
         $symbol = [
             'language' => 'php',
-            'symbol_type' => $type,
+            'symbol_type' => $symbolType->value,
             'fqn' => $fqn,
             'name' => $shortName,
             'namespace' => $this->currentNamespace ?: null,
@@ -166,7 +171,7 @@ class PHPExtractor implements ExtractorInterface
         $this->applyDeprecationFromDocblock($symbol, $docblock);
         $this->symbols[] = $symbol;
 
-        if ($type === 'class') {
+        if ($symbolType === SymbolType::ClassSymbol) {
             $this->checkSpecialDrupalClasses($node, $symbol, $docblock, $interfacesText);
             $this->extractClassAttributes($node, $source, $filePath, $fqn, $this->currentNamespace);
         }
@@ -199,7 +204,7 @@ class PHPExtractor implements ExtractorInterface
         if ($docblock) {
             if (preg_match('/@(\w+)\s*\(\s*.*?\bid\s*[:=]\s*["\']([^"\']+)["\']/is', $docblock, $m)) {
                 $this->symbols[] = array_merge($symbol, [
-                    'symbol_type' => 'plugin_definition',
+                    'symbol_type' => SymbolType::PluginDefinition->value,
                     'fqn' => $m[2],
                     'name' => $m[1],
                     'metadata_json' => json_encode(['plugin_type' => $m[1], 'plugin_id' => $m[2]]),
@@ -210,7 +215,7 @@ class PHPExtractor implements ExtractorInterface
         if ($interfaces && str_contains($interfaces, 'EventSubscriberInterface')) {
             $events = $this->extractSubscribedEvents($node, $symbol['source_text']);
             $this->symbols[] = array_merge($symbol, [
-                'symbol_type' => 'event_subscriber',
+                'symbol_type' => SymbolType::EventSubscriber->value,
                 'metadata_json' => json_encode(['events' => $events]),
             ]);
         }
@@ -258,12 +263,12 @@ class PHPExtractor implements ExtractorInterface
 
         $symbol = [
             'language' => 'php',
-            'symbol_type' => 'function',
+            'symbol_type' => SymbolType::FunctionSymbol->value,
             'fqn' => $fqn,
             'name' => $shortName,
             'namespace' => $this->currentNamespace ?: null,
             'signature_json' => json_encode(['params' => $params, 'return_type' => $returnType]),
-            'signature_hash' => hash('sha256', "function|{$fqn}|" . json_encode($params) . "|{$returnType}"),
+            'signature_hash' => hash('sha256', SymbolType::FunctionSymbol->value . "|{$fqn}|" . json_encode($params) . "|{$returnType}"),
             'source_text' => $node->text(),
             'line_start' => $node->startPoint()['row'] + 1,
             'line_end' => $node->endPoint()['row'] + 1,
@@ -287,7 +292,7 @@ class PHPExtractor implements ExtractorInterface
         $hookName = $this->adapter->extractHookName($symbol['name'], $filePath);
         if ($hookName !== null) {
             $this->symbols[] = array_merge($symbol, [
-                'symbol_type' => 'hook',
+                'symbol_type' => SymbolType::Hook->value,
                 'fqn' => $hookName,
                 'name' => $hookName,
             ]);
@@ -323,7 +328,7 @@ class PHPExtractor implements ExtractorInterface
 
         $symbol = [
             'language' => 'php',
-            'symbol_type' => 'method',
+            'symbol_type' => SymbolType::Method->value,
             'fqn' => $fqn,
             'name' => $shortName,
             'namespace' => $this->currentNamespace ?: null,
@@ -360,19 +365,19 @@ class PHPExtractor implements ExtractorInterface
                     ? $parentClass . '::' . $shortName
                     : ($this->currentNamespace ? $this->currentNamespace . '\\' . $shortName : $shortName);
 
-                $symbolType = 'constant';
+                $symbolType = SymbolType::Constant;
                 if ($parentClass && (str_contains($parentClass, 'Events') || str_contains($parentClass, 'Event'))) {
-                    $symbolType = 'drupal_event';
+                    $symbolType = SymbolType::DrupalEvent;
                 }
 
                 $this->symbols[] = [
                     'language' => 'php',
-                    'symbol_type' => $symbolType,
+                    'symbol_type' => $symbolType->value,
                     'fqn' => $fqn,
                     'name' => $shortName,
                     'namespace' => $this->currentNamespace ?: null,
                     'parent_symbol' => $parentClass,
-                    'signature_hash' => hash('sha256', "{$symbolType}|{$fqn}"),
+                    'signature_hash' => hash('sha256', "{$symbolType->value}|{$fqn}"),
                     'source_text' => $node->text(),
                     'line_start' => $node->startPoint()['row'] + 1,
                     'line_end' => $node->endPoint()['row'] + 1,
@@ -405,7 +410,7 @@ class PHPExtractor implements ExtractorInterface
             if ($hookName) {
                 $this->symbols[] = [
                     'language' => 'php',
-                    'symbol_type' => 'hook',
+                    'symbol_type' => SymbolType::Hook->value,
                     'fqn' => $hookName,
                     'name' => $hookName,
                     'namespace' => $this->currentNamespace ?: null,
@@ -442,7 +447,7 @@ class PHPExtractor implements ExtractorInterface
             if ($pluginId) {
                 $this->symbols[] = [
                     'language' => 'php',
-                    'symbol_type' => 'plugin_definition',
+                    'symbol_type' => SymbolType::PluginDefinition->value,
                     'fqn' => $pluginId,
                     'name' => $attrName,
                     'namespace' => $this->currentNamespace ?: null,
@@ -509,6 +514,16 @@ class PHPExtractor implements ExtractorInterface
     {
         $returnType = $node->childByFieldName('return_type');
         return $returnType ? $returnType->text() : null;
+    }
+
+    private function resolveClassLikeSymbolType(string $type): SymbolType
+    {
+        return match ($type) {
+            'class' => SymbolType::ClassSymbol,
+            'interface' => SymbolType::InterfaceSymbol,
+            'trait' => SymbolType::TraitSymbol,
+            default => throw new \InvalidArgumentException("Unsupported class-like symbol type: {$type}"),
+        };
     }
 
     private function findDocblock(Node $node): ?string

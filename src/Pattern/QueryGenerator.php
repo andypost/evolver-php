@@ -4,17 +4,23 @@ declare(strict_types=1);
 
 namespace DrupalEvolver\Pattern;
 
+use DrupalEvolver\Symbol\SymbolType;
+
 class QueryGenerator
 {
     public function generate(string $changeType, array $symbol): ?string
     {
-        $type = (string) ($symbol['symbol_type'] ?? '');
+        $type = SymbolType::fromSymbol($symbol);
         $name = $this->resolveName($symbol);
         if ($name === '') {
             return null;
         }
 
         if ($changeType === 'signature_changed') {
+            if ($type === null) {
+                return null;
+            }
+
             return $this->signatureMatch($type, $name);
         }
 
@@ -157,12 +163,12 @@ class QueryGenerator
         return "(string_content) @str (#eq? @str \"{$literal}\")";
     }
 
-    private function signatureMatch(string $symbolType, string $name): ?string
+    private function signatureMatch(SymbolType $symbolType, string $name): ?string
     {
         $literal = $this->escapeLiteral($name);
         return match ($symbolType) {
-            'function', 'hook' => "(function_call_expression function: (name) @fn (#eq? @fn \"{$literal}\") arguments: (arguments) @args)",
-            'method' => "(member_call_expression name: (name) @method (#eq? @method \"{$literal}\") arguments: (arguments) @args)",
+            SymbolType::FunctionSymbol, SymbolType::Hook => "(function_call_expression function: (name) @fn (#eq? @fn \"{$literal}\") arguments: (arguments) @args)",
+            SymbolType::Method => "(member_call_expression name: (name) @method (#eq? @method \"{$literal}\") arguments: (arguments) @args)",
             default => null,
         };
     }
@@ -198,26 +204,28 @@ class QueryGenerator
      */
     private function queryBySymbol(array $symbol): ?string
     {
-        $symbolType = (string) ($symbol['symbol_type'] ?? '');
+        $symbolType = SymbolType::fromSymbol($symbol);
         $name = $this->resolveName($symbol);
-        if ($name === '') {
+        if ($symbolType === null || $name === '') {
             return null;
         }
 
         return match ($symbolType) {
-            'function', 'hook' => $this->functionCall($name),
-            'method' => $this->methodCall($name),
-            'class', 'interface', 'trait', 'constant' => $this->classReference($symbol, $name),
-            'service' => $this->serviceReference($name),
-            'drupal_library', 'library_usage' => $this->libraryReference($name),
-            'route', 'permission', 'config_schema', 'library',
-            'module_info', 'theme_info', 'profile_info', 'theme_engine_info',
-            'link_menu', 'link_task', 'link_action', 'link_contextual',
-            'breakpoint', 'config_export', 'recipe_manifest', 'sdc_component' => $this->stringReference($name),
-            'sdc_include', 'sdc_embed', 'sdc_call', 'sdc_function',
-            'twig_include', 'twig_embed', 'twig_extends', 'twig_component' => $this->twigReference($name),
-            'plugin_definition' => $this->classReference($symbol, $name),
-            'event_subscriber' => $this->eventReference($name),
+            SymbolType::FunctionSymbol, SymbolType::Hook => $this->functionCall($name),
+            SymbolType::Method => $this->methodCall($name),
+            SymbolType::ClassSymbol, SymbolType::InterfaceSymbol, SymbolType::TraitSymbol, SymbolType::Constant => $this->classReference($symbol, $name),
+            SymbolType::Service => $this->serviceReference($name),
+            SymbolType::DrupalLibrary, SymbolType::LibraryUsage => $this->libraryReference($name),
+            SymbolType::Route, SymbolType::DrupalRoute,
+            SymbolType::Permission, SymbolType::DrupalPermission,
+            SymbolType::ConfigSchema, SymbolType::Library,
+            SymbolType::ModuleInfo, SymbolType::ThemeInfo, SymbolType::ProfileInfo, SymbolType::ThemeEngineInfo,
+            SymbolType::LinkMenu, SymbolType::LinkTask, SymbolType::LinkAction, SymbolType::LinkContextual,
+            SymbolType::Breakpoint, SymbolType::ConfigExport, SymbolType::RecipeManifest, SymbolType::SdcComponent => $this->stringReference($name),
+            SymbolType::SdcInclude, SymbolType::SdcEmbed, SymbolType::SdcCall, SymbolType::SdcFunction,
+            SymbolType::TwigInclude, SymbolType::TwigEmbed, SymbolType::TwigExtends, SymbolType::TwigComponent => $this->twigReference($name),
+            SymbolType::PluginDefinition => $this->classReference($symbol, $name),
+            SymbolType::EventSubscriber => $this->eventReference($name),
             default => null,
         };
     }

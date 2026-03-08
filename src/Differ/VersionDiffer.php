@@ -6,6 +6,7 @@ namespace DrupalEvolver\Differ;
 
 use DrupalEvolver\Pattern\QueryGenerator;
 use DrupalEvolver\Storage\DatabaseApi;
+use DrupalEvolver\Symbol\SymbolType;
 
 class VersionDiffer
 {
@@ -91,8 +92,9 @@ class VersionDiffer
                 $oldId = $this->symbolId($old);
                 if ($oldId !== null) $consumedRemoved[$oldId] = true;
 
-                $changeType = (string) ($rename['change_type'] ?? (($old['symbol_type'] ?? 'symbol') . '_renamed'));
-                $migrationHint = sprintf('This %s was renamed to %s.', str_replace('_', ' ', $old['symbol_type'] ?? 'symbol'), $new['fqn']);
+                $oldType = SymbolType::valueFromSymbol($old, 'symbol');
+                $changeType = (string) ($rename['change_type'] ?? ($oldType . '_renamed'));
+                $migrationHint = sprintf('This %s was renamed to %s.', str_replace('_', ' ', $oldType), $new['fqn']);
                 
                 $changes[] = [
                     'from_version_id' => $fromId,
@@ -140,7 +142,7 @@ class VersionDiffer
             $oldId = $this->symbolId($old);
             if ($oldId !== null) $consumedRemoved[$oldId] = true;
 
-            $changeType = (string) ($rename['change_type'] ?? (($old['symbol_type'] ?? 'symbol') . '_renamed'));
+            $changeType = (string) ($rename['change_type'] ?? (SymbolType::valueFromSymbol($old, 'symbol') . '_renamed'));
             $changes[] = [
                 'from_version_id' => $fromId,
                 'to_version_id' => $toId,
@@ -166,7 +168,7 @@ class VersionDiffer
             $oldId = $this->symbolId($old);
             if ($oldId !== null && isset($consumedRemoved[$oldId])) continue;
 
-            $changeType = (string) ($entry['change_type'] ?? (($old['symbol_type'] ?? 'symbol') . '_removed'));
+            $changeType = (string) ($entry['change_type'] ?? (SymbolType::valueFromSymbol($old, 'symbol') . '_removed'));
             $changes[] = [
                 'from_version_id' => $fromId,
                 'to_version_id' => $toId,
@@ -188,9 +190,12 @@ class VersionDiffer
             if ($oldId !== null && isset($consumedRemoved[$oldId])) continue;
             if ((int) ($sym['is_deprecated'] ?? 0) === 1) continue;
 
-            $changeType = $sym['symbol_type'] === 'drupal_event' ? 'event_removed' : $sym['symbol_type'] . '_removed';
+            $symbolType = SymbolType::fromSymbol($sym);
+            $changeType = $symbolType === SymbolType::DrupalEvent
+                ? 'event_removed'
+                : SymbolType::valueFromSymbol($sym, 'symbol') . '_removed';
             $migrationHint = $sym['deprecation_message'] ?? null;
-            if (!$migrationHint && str_contains($changeType, 'hook')) {
+            if (!$migrationHint && SymbolType::isHookLikeValue(SymbolType::valueFromSymbol($sym))) {
                 $migrationHint = 'Procedural hooks are being deprecated. Consider migrating to #[Hook] or #[AsEventListener] attributes.';
             }
 
@@ -258,7 +263,7 @@ class VersionDiffer
             ];
 
             // 2c. Add inheritance impact for method signature changes
-            if ($pair['old']['symbol_type'] === 'method' && $pair['old']['parent_symbol']) {
+            if (SymbolType::fromSymbol($pair['old']) === SymbolType::Method && $pair['old']['parent_symbol']) {
                 $changes[] = [
                     'from_version_id' => $fromId,
                     'to_version_id' => $toId,
@@ -327,10 +332,14 @@ class VersionDiffer
         $output?->write("Diffing libraries... ");
         $libChanges = $this->libraryDiffer->diffLibraries($fromId, $toId);
         foreach ($libChanges as $libChange) {
-            $libChange['ts_query'] = $this->queryGenerator->generate(
-                $libChange['change_type'],
-                ['symbol_type' => 'drupal_library', 'fqn' => $libChange['old_fqn'] ?? $libChange['new_fqn'] ?? '', 'name' => $libChange['old_fqn'] ?? $libChange['new_fqn'] ?? '']
-            );
+                $libChange['ts_query'] = $this->queryGenerator->generate(
+                    $libChange['change_type'],
+                    [
+                        'symbol_type' => SymbolType::DrupalLibrary,
+                        'fqn' => $libChange['old_fqn'] ?? $libChange['new_fqn'] ?? '',
+                        'name' => $libChange['old_fqn'] ?? $libChange['new_fqn'] ?? '',
+                    ]
+                );
             $changes[] = $libChange;
         }
         $output?->writeln(sprintf("<comment>%d library changes</comment>", count($libChanges)));
@@ -365,7 +374,7 @@ class VersionDiffer
         $newlyDeprecated = $this->api->findNewlyDeprecated($fromId, $toId, $this->pathFilter);
         foreach ($newlyDeprecated as $sym) {
             $migrationHint = $sym['deprecation_message'] ?? null;
-            if (!$migrationHint && str_contains((string)$sym['symbol_type'], 'hook')) {
+            if (!$migrationHint && SymbolType::isHookLikeValue(SymbolType::valueFromSymbol($sym))) {
                 $migrationHint = 'This hook is newly deprecated. Consider migrating to #[Hook] or #[AsEventListener] attributes.';
             }
 
@@ -385,7 +394,7 @@ class VersionDiffer
         $deprecatedRemoved = $this->api->findDeprecatedThenRemoved($fromId, $toId, $this->pathFilter);
         foreach ($deprecatedRemoved as $sym) {
             $migrationHint = $sym['deprecation_message'] ?? null;
-            if (!$migrationHint && str_contains((string)$sym['symbol_type'], 'hook')) {
+            if (!$migrationHint && SymbolType::isHookLikeValue(SymbolType::valueFromSymbol($sym))) {
                 $migrationHint = 'This hook was removed. You must migrate to #[Hook] or #[AsEventListener] attributes.';
             }
 
@@ -393,7 +402,7 @@ class VersionDiffer
                 'from_version_id' => $fromId,
                 'to_version_id' => $toId,
                 'language' => $sym['language'],
-                'change_type' => $sym['symbol_type'] . '_removed',
+                'change_type' => SymbolType::valueFromSymbol($sym, 'symbol') . '_removed',
                 'severity' => 'removal',
                 'old_symbol_id' => $sym['id'],
                 'old_fqn' => $sym['fqn'],
@@ -410,14 +419,14 @@ class VersionDiffer
         $removedByLangType = [];
         foreach ($removed as $sym) {
             $lang = (string) ($sym['language'] ?? 'unknown');
-            $type = (string) ($sym['symbol_type'] ?? 'unknown');
+            $type = SymbolType::valueFromSymbol($sym, 'unknown');
             $removedByLangType[$lang][$type][] = $sym;
         }
 
         $addedByLangType = [];
         foreach ($added as $sym) {
             $lang = (string) ($sym['language'] ?? 'unknown');
-            $type = (string) ($sym['symbol_type'] ?? 'unknown');
+            $type = SymbolType::valueFromSymbol($sym, 'unknown');
             $addedByLangType[$lang][$type][] = $sym;
         }
 
@@ -500,8 +509,8 @@ class VersionDiffer
         $changes = [];
 
         // Get all hook symbols from both versions
-        $fromHooks = $this->api->symbols()->findByTypeAndVersion($fromId, 'hook');
-        $toHooks = $this->api->symbols()->findByTypeAndVersion($toId, 'hook');
+        $fromHooks = $this->api->symbols()->findByTypeAndVersion($fromId, SymbolType::Hook);
+        $toHooks = $this->api->symbols()->findByTypeAndVersion($toId, SymbolType::Hook);
 
         // Build sets of hook names by implementation style
         $fromProcedural = [];
@@ -538,7 +547,7 @@ class VersionDiffer
                     'new_fqn' => $hookName,
                     'confidence' => 0.9,
                     'migration_hint' => "Hook '{$hookName}' can be converted from procedural implementation to #[Hook('{$hookName}')] attribute on a class method. This improves discoverability and follows modern Drupal conventions.",
-                    'ts_query' => $this->queryGenerator->generate('hook_to_attribute', ['symbol_type' => 'function', 'fqn' => $hookName, 'name' => $hookName]),
+                    'ts_query' => $this->queryGenerator->generate('hook_to_attribute', ['symbol_type' => SymbolType::FunctionSymbol, 'fqn' => $hookName, 'name' => $hookName]),
                 ];
             }
         }

@@ -7,6 +7,7 @@ namespace DrupalEvolver\Indexer;
 use DrupalEvolver\Adapter\DrupalCoreAdapter;
 use DrupalEvolver\Storage\DatabaseApi;
 use DrupalEvolver\Storage\Repository\SymbolRepo;
+use DrupalEvolver\Symbol\SymbolType;
 use DrupalEvolver\TreeSitter\Parser;
 use Symfony\Component\Console\Helper\ProgressBar;
 use Symfony\Component\Console\Output\OutputInterface;
@@ -262,7 +263,7 @@ class CoreIndexer
                         $symbolRows[] = $symbolData;
 
                         // Identify extension metadata symbols
-                        if (str_ends_with((string)($symbolData['symbol_type'] ?? ''), '_info')) {
+                        if (str_ends_with(SymbolType::valueFromSymbol($symbolData), '_info')) {
                             $this->saveExtension($versionId, $symbolData, $path);
                         }
                     }
@@ -294,7 +295,7 @@ class CoreIndexer
         $metadata = isset($symbol['metadata_json']) ? json_decode($symbol['metadata_json'], true) : [];
         if (!is_array($metadata)) $metadata = [];
         
-        $type = str_replace('_info', '', $symbol['symbol_type']);
+        $type = str_replace('_info', '', SymbolType::valueFromSymbol($symbol));
         $machineName = $symbol['fqn'];
 
         (void) $this->api->db()->execute(

@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace DrupalEvolver\Indexer\Extractor;
 
+use DrupalEvolver\Symbol\SymbolType;
+
 /**
  * Extracts library usage (attachments) from PHP and Twig files via regex.
  *
@@ -16,7 +18,7 @@ namespace DrupalEvolver\Indexer\Extractor;
  */
 final class AssetUsageExtractor
 {
-    private const string SYMBOL_TYPE = 'library_usage';
+    private const string SYMBOL_TYPE = SymbolType::LibraryUsage->value;
 
     /**
      * Extract library usage symbols from file content.
@@ -35,7 +37,38 @@ final class AssetUsageExtractor
             return $this->extractFromTwig($filePath, $source);
         }
 
+        if (str_ends_with($filePath, '.yml') || str_ends_with($filePath, '.yaml')) {
+            return $this->extractFromYaml($filePath, $source);
+        }
+
         return [];
+    }
+
+    /**
+     * Extract library attachments from YAML files (*.info.yml, *.libraries.yml).
+     *
+     * Matches list items like:
+     *   - core/jquery
+     *
+     * @return list<array<string, mixed>>
+     */
+    private function extractFromYaml(string $filePath, string $source): array
+    {
+        $symbols = [];
+
+        if (preg_match_all(
+            '/^\s*-\s+[\'"]?([\w_]+\/[\w_.-]+)[\'"]?\s*$/m',
+            $source,
+            $matches,
+            PREG_OFFSET_CAPTURE
+        )) {
+            foreach ($matches[1] as [$libraryName, $offset]) {
+                $lineStart = substr_count($source, "\n", 0, $offset) + 1;
+                $symbols[] = $this->createSymbol($filePath, $libraryName, 'yaml_list', $lineStart, $offset, $offset + strlen($libraryName));
+            }
+        }
+
+        return $this->deduplicateSymbols($symbols);
     }
 
     /**
@@ -119,7 +152,11 @@ final class AssetUsageExtractor
         int $byteStart,
         int $byteEnd,
     ): array {
-        $language = str_ends_with($filePath, '.twig') || str_ends_with($filePath, '.html.twig') ? 'twig' : 'php';
+        $language = match (true) {
+            str_ends_with($filePath, '.twig') => 'twig',
+            str_ends_with($filePath, '.yml'), str_ends_with($filePath, '.yaml') => 'yaml',
+            default => 'php',
+        };
 
         return [
             'language' => $language,
@@ -128,7 +165,7 @@ final class AssetUsageExtractor
             'name' => $libraryName,
             'namespace' => null,
             'parent_symbol' => null,
-            'signature_hash' => hash('sha256', "library_usage|{$libraryName}|{$filePath}|{$byteStart}"),
+            'signature_hash' => hash('sha256', self::SYMBOL_TYPE . "|{$libraryName}|{$filePath}|{$byteStart}"),
             'signature_json' => json_encode([
                 'library_name' => $libraryName,
                 'attachment_type' => $attachmentType,

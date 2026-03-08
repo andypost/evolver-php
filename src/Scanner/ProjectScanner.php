@@ -384,6 +384,7 @@ final class ProjectScanner
         $language = $file['language'];
 
         $relevantChanges = $changesByLanguage[$language] ?? [];
+        $libraryChanges = $changesByLanguage['drupal_libraries'] ?? [];
         
         $content = file_get_contents($filePath);
         if ($content === false) {
@@ -391,9 +392,41 @@ final class ProjectScanner
         }
 
         try {
+            $matches = [];
+
+            // Phase 1.2: Check for library usage breakage (no TreeSitter needed)
+            if (($language === 'php' || $language === 'twig' || $language === 'yaml') && $libraryChanges !== []) {
+                $assetExtractor = new \DrupalEvolver\Indexer\Extractor\AssetUsageExtractor();
+                $usages = $assetExtractor->extract($relativePath, $content);
+                
+                foreach ($usages as $usage) {
+                    foreach ($libraryChanges as $libChange) {
+                        if ($libChange['old_fqn'] === $usage['name']) {
+                            $matches[] = [
+                                'project_id' => $projectId,
+                                'scan_run_id' => $scanRunId,
+                                'file_path' => $relativePath,
+                                'change_id' => ($libChange['id'] ?? 0) > 0 ? $libChange['id'] : null,
+                                'line_start' => $usage['line_start'],
+                                'line_end' => $usage['line_end'],
+                                'byte_start' => $usage['byte_start'],
+                                'byte_end' => $usage['byte_end'],
+                                'matched_source' => $usage['source_text'],
+                                'fix_method' => 'manual',
+                                'suggested_fix' => null,
+                                'status' => 'pending',
+                                'change_type' => $libChange['change_type'] ?? null,
+                                'severity' => $libChange['severity'] ?? null,
+                                'old_fqn' => $libChange['old_fqn'] ?? null,
+                                'migration_hint' => $libChange['migration_hint'] ?? null,
+                            ];
+                        }
+                    }
+                }
+            }
+
             $tree = $parser->parse($content, $language);
             $root = $tree->rootNode();
-            $matches = [];
 
             if ($relevantChanges !== []) {
                 foreach ($matchCollector->collectMatches($root, $content, $language, $relevantChanges) as $match) {

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace DrupalEvolver\Differ;
 
 use DrupalEvolver\Storage\Database;
+use DrupalEvolver\Symbol\SymbolType;
 
 class DeprecationTracker
 {
@@ -75,7 +76,7 @@ class DeprecationTracker
                 'from_version_id' => $fromVersionId,
                 'to_version_id' => $toVersionId,
                 'language' => $sym['language'],
-                'change_type' => $sym['symbol_type'] . '_removed',
+                'change_type' => SymbolType::valueFromSymbol($sym, 'symbol') . '_removed',
                 'severity' => 'removal',
                 'old_symbol_id' => $sym['id'],
                 'old_fqn' => $sym['fqn'],

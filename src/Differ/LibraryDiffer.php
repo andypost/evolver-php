@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace DrupalEvolver\Differ;
 
 use DrupalEvolver\Storage\DatabaseApi;
+use DrupalEvolver\Symbol\SymbolType;
 
 /**
  * Detects changes in library definitions between versions.
@@ -31,8 +32,8 @@ final class LibraryDiffer
     {
         $changes = [];
 
-        $fromLibs = $this->api->symbols()->findByTypeAndVersion($fromVersionId, 'drupal_library');
-        $toLibs = $this->api->symbols()->findByTypeAndVersion($toVersionId, 'drupal_library');
+        $fromLibs = $this->api->symbols()->findByTypeAndVersion($fromVersionId, SymbolType::DrupalLibrary);
+        $toLibs = $this->api->symbols()->findByTypeAndVersion($toVersionId, SymbolType::DrupalLibrary);
 
         $fromLibraries = $this->indexLibraries($fromLibs);
         $toLibraries = $this->indexLibraries($toLibs);

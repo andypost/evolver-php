@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace DrupalEvolver\Indexer;
 
 use DrupalEvolver\Storage\DatabaseApi;
+use DrupalEvolver\Symbol\SymbolType;
 
 /**
  * Builds cross-file relations between symbols.
@@ -37,10 +38,10 @@ class SymbolRelationBuilder
     {
         // Get all service symbols for this version
         $services = $this->api->db()->query(
-            "SELECT s.id, s.fqn, s.metadata_json
+             "SELECT s.id, s.fqn, s.metadata_json
              FROM symbols s
              WHERE s.version_id = :vid
-               AND s.symbol_type = 'service'",
+               AND s.symbol_type = '" . SymbolType::Service->value . "'",
             ['vid' => $versionId]
         )->fetchAll();
 
@@ -56,7 +57,7 @@ class SymbolRelationBuilder
                 "SELECT s.id
                  FROM symbols s
                  WHERE s.version_id = :vid
-                   AND s.symbol_type IN ('class', 'interface')
+                   AND s.symbol_type IN ('" . SymbolType::ClassSymbol->value . "', '" . SymbolType::InterfaceSymbol->value . "')
                    AND s.fqn = :fqn
                  LIMIT 1",
                 ['vid' => $versionId, 'fqn' => $class]
@@ -81,10 +82,10 @@ class SymbolRelationBuilder
     {
         // Get all route symbols for this version
         $routes = $this->api->db()->query(
-            "SELECT s.id, s.fqn, s.metadata_json
+             "SELECT s.id, s.fqn, s.metadata_json
              FROM symbols s
              WHERE s.version_id = :vid
-               AND s.symbol_type = 'drupal_route'",
+               AND s.symbol_type = '" . SymbolType::DrupalRoute->value . "'",
             ['vid' => $versionId]
         )->fetchAll();
 
@@ -107,7 +108,7 @@ class SymbolRelationBuilder
                 "SELECT s.id
                  FROM symbols s
                  WHERE s.version_id = :vid
-                   AND s.symbol_type = 'method'
+                   AND s.symbol_type = '" . SymbolType::Method->value . "'
                    AND s.fqn = :fqn
                  LIMIT 1",
                 ['vid' => $versionId, 'fqn' => $classFqn . '::' . $methodName]
@@ -119,7 +120,7 @@ class SymbolRelationBuilder
                     "SELECT s.id
                      FROM symbols s
                      WHERE s.version_id = :vid
-                       AND s.symbol_type = 'class'
+                       AND s.symbol_type = '" . SymbolType::ClassSymbol->value . "'
                        AND s.fqn = :fqn
                      LIMIT 1",
                     ['vid' => $versionId, 'fqn' => $classFqn]
@@ -153,10 +154,10 @@ class SymbolRelationBuilder
     {
         // Get all plugin definition symbols for this version
         $plugins = $this->api->db()->query(
-            "SELECT s.id, s.fqn, s.name, s.parent_symbol, s.metadata_json, s.line_start
+             "SELECT s.id, s.fqn, s.name, s.parent_symbol, s.metadata_json, s.line_start
              FROM symbols s
              WHERE s.version_id = :vid
-               AND s.symbol_type = 'plugin_definition'",
+               AND s.symbol_type = '" . SymbolType::PluginDefinition->value . "'",
             ['vid' => $versionId]
         )->fetchAll();
 
@@ -172,7 +173,7 @@ class SymbolRelationBuilder
                 "SELECT s.id
                  FROM symbols s
                  WHERE s.version_id = :vid
-                   AND s.symbol_type IN ('class', 'interface')
+                   AND s.symbol_type IN ('" . SymbolType::ClassSymbol->value . "', '" . SymbolType::InterfaceSymbol->value . "')
                    AND s.fqn = :fqn
                  LIMIT 1",
                 ['vid' => $versionId, 'fqn' => $parentClass]

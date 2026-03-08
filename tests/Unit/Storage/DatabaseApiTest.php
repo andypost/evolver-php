@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace DrupalEvolver\Tests\Unit\Storage;
 
 use DrupalEvolver\Storage\DatabaseApi;
+use DrupalEvolver\Symbol\SymbolType;
 use PHPUnit\Framework\TestCase;
 
 class DatabaseApiTest extends TestCase
@@ -415,7 +416,7 @@ class DatabaseApiTest extends TestCase
             'metadata_json' => '{"label":"Example","dependency_targets":["block","node"],"mentioned_extensions":["block","node"],"configure_route":"example.settings"}',
         ]);
 
-        $results = $this->api->searchSemanticYamlSymbols($versionId, 'block', ['module_info']);
+        $results = $this->api->searchSemanticYamlSymbols($versionId, 'block', [SymbolType::ModuleInfo]);
 
         $this->assertCount(1, $results);
         $this->assertSame('module_info', $results[0]['symbol_type']);
@@ -440,7 +441,7 @@ class DatabaseApiTest extends TestCase
             'metadata_json' => '{"label":"Configure block","route_name":"entity.block.edit_form","route_refs":["entity.block.edit_form"],"group":"block"}',
         ]);
 
-        $results = $this->api->searchSemanticYamlSymbols($versionId, 'entity.block.edit_form', ['link_contextual']);
+        $results = $this->api->searchSemanticYamlSymbols($versionId, 'entity.block.edit_form', [SymbolType::LinkContextual]);
 
         $this->assertCount(1, $results);
         $this->assertSame('block_configure', $results[0]['fqn']);
@@ -475,7 +476,7 @@ class DatabaseApiTest extends TestCase
             'signature_json' => '{"class":"Drupal\\\\block\\\\BlockRepository","arguments":"[@entity_type.manager]"}',
         ]);
 
-        $results = $this->api->searchSemanticYamlSymbols($versionId, 'Drupal\\block\\BlockRepository', ['service']);
+        $results = $this->api->searchSemanticYamlSymbols($versionId, 'Drupal\\block\\BlockRepository', [SymbolType::Service]);
 
         $this->assertCount(1, $results);
         $this->assertSame('block.repository', $results[0]['fqn']);
@@ -500,7 +501,7 @@ class DatabaseApiTest extends TestCase
             'metadata_json' => '{"owner":"block","asset_paths":["core/modules/block/css/block.admin.css","core/modules/block/js/block.admin.js"],"javascript_assets":["core/modules/block/js/block.admin.js"],"css_assets":["core/modules/block/css/block.admin.css"],"dependency_libraries":["core/drupal","core/once"],"dependency_owners":["core"]}',
         ]);
 
-        $results = $this->api->searchSemanticYamlSymbols($versionId, 'core/modules/block/js/block.admin.js', ['drupal_library']);
+        $results = $this->api->searchSemanticYamlSymbols($versionId, 'core/modules/block/js/block.admin.js', [SymbolType::DrupalLibrary]);
 
         $this->assertCount(1, $results);
         $this->assertSame('drupal_library', $results[0]['symbol_type']);
@@ -679,7 +680,7 @@ class DatabaseApiTest extends TestCase
             'metadata_json' => '{"top_level_keys":["dependencies","status"],"dependency_modules":["block","node"],"skipped_keys":["uuid","langcode","_core.default_config_hash"]}',
         ]);
 
-        $results = $this->api->searchSemanticYamlSymbols($versionId, 'node', ['config_export']);
+        $results = $this->api->searchSemanticYamlSymbols($versionId, 'node', [SymbolType::ConfigExport]);
 
         $this->assertCount(1, $results);
         $this->assertSame('config_export', $results[0]['symbol_type']);

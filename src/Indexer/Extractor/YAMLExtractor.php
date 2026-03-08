@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace DrupalEvolver\Indexer\Extractor;
 
+use DrupalEvolver\Symbol\SymbolType;
 use DrupalEvolver\TreeSitter\FFIBinding;
 use DrupalEvolver\TreeSitter\Node;
 
@@ -73,7 +74,7 @@ class YAMLExtractor implements ExtractorInterface
 
                 $this->symbols[] = [
                     'language' => 'yaml',
-                    'symbol_type' => 'drupal_library',
+                    'symbol_type' => SymbolType::DrupalLibrary->value,
                     'fqn' => $keyText,
                     'name' => $keyText,
                     'signature_hash' => hash('sha256', "library|{$keyText}"),
@@ -102,7 +103,7 @@ class YAMLExtractor implements ExtractorInterface
 
                 $this->symbols[] = [
                     'language' => 'yaml',
-                    'symbol_type' => 'config_schema',
+                    'symbol_type' => SymbolType::ConfigSchema->value,
                     'fqn' => $keyText,
                     'name' => $keyText,
                     'signature_hash' => hash('sha256', "schema|{$keyText}"),
@@ -137,7 +138,7 @@ class YAMLExtractor implements ExtractorInterface
 
                 $this->symbols[] = [
                     'language' => 'yaml',
-                    'symbol_type' => 'service',
+                    'symbol_type' => SymbolType::Service->value,
                     'fqn' => $keyText,
                     'name' => $keyText,
                     'signature_hash' => hash('sha256', "service|{$keyText}|" . json_encode($serviceData)),
@@ -166,7 +167,7 @@ class YAMLExtractor implements ExtractorInterface
 
         $this->symbols[] = [
             'language' => 'yaml',
-            'symbol_type' => 'event_subscriber',
+            'symbol_type' => SymbolType::EventSubscriber->value,
             'fqn' => $serviceId,
             'name' => $serviceId,
             'namespace' => null,
@@ -222,7 +223,7 @@ class YAMLExtractor implements ExtractorInterface
 
                 $this->symbols[] = [
                     'language' => 'yaml',
-                    'symbol_type' => 'drupal_route',
+                    'symbol_type' => SymbolType::DrupalRoute->value,
                     'fqn' => $routeName,
                     'name' => $routeName,
                     'signature_hash' => hash('sha256', "route|{$routeName}|" . json_encode($routeData)),
@@ -284,7 +285,7 @@ class YAMLExtractor implements ExtractorInterface
 
                 $this->symbols[] = [
                     'language' => 'yaml',
-                    'symbol_type' => 'drupal_permission',
+                    'symbol_type' => SymbolType::DrupalPermission->value,
                     'fqn' => $permId,
                     'name' => $permId,
                     'signature_hash' => hash('sha256', "permission|{$permId}|" . json_encode($permData)),

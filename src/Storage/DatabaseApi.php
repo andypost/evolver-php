@@ -16,6 +16,7 @@ use DrupalEvolver\Storage\Repository\ScanRunRepo;
 use DrupalEvolver\Storage\Repository\SymbolRelationRepo;
 use DrupalEvolver\Storage\Repository\SymbolRepo;
 use DrupalEvolver\Storage\Repository\VersionRepo;
+use DrupalEvolver\Symbol\SymbolType;
 use Generator;
 use PDOStatement;
 
@@ -168,10 +169,10 @@ class DatabaseApi
         }
 
         $links = [];
-        $symbolType = (string) ($symbol['symbol_type'] ?? '');
+        $symbolType = SymbolType::fromSymbol($symbol);
         $language = (string) ($symbol['language'] ?? '');
 
-        if ($language === 'yaml' && $symbolType === 'service') {
+        if ($language === 'yaml' && $symbolType === SymbolType::Service) {
             $signature = $this->decodeJsonMap($symbol['signature_json'] ?? null);
             $classFqn = ltrim((string) ($signature['class'] ?? ''), '\\');
             if ($classFqn !== '') {
@@ -187,7 +188,7 @@ class DatabaseApi
                     [
                         'vid' => $versionId,
                         'lang' => 'php',
-                        'type' => 'class',
+                        'type' => SymbolType::ClassSymbol->value,
                         'fqn' => $classFqn,
                     ]
                 )->fetch();
@@ -201,7 +202,7 @@ class DatabaseApi
             }
         }
 
-        if ($language === 'drupal_libraries' && $symbolType === 'drupal_library') {
+        if ($language === 'drupal_libraries' && $symbolType === SymbolType::DrupalLibrary) {
             $metadata = $this->decodeJsonMap($symbol['metadata_json'] ?? null);
             $assetPaths = $this->decodeJsonStringList($metadata['asset_paths'] ?? null);
 
@@ -213,7 +214,7 @@ class DatabaseApi
             }
         }
 
-        if ($symbolType === 'sdc_component') {
+        if ($symbolType === SymbolType::SdcComponent) {
             $metadata = $this->decodeJsonMap($symbol['metadata_json'] ?? null);
             $sdcId = $metadata['sdc_component'] ?? $symbol['fqn'];
             
@@ -240,17 +241,18 @@ class DatabaseApi
         }
 
         $sdcId = $this->decodeJsonMap($symbol['metadata_json'] ?? null)['sdc_component'] ?? null;
-        if ($sdcId && $symbolType !== 'sdc_component') {
+        if ($sdcId && $symbolType !== SymbolType::SdcComponent) {
             $sdcSymbol = $this->database->query(
                 'SELECT s.*, f.file_path
                  FROM symbols s
                  JOIN parsed_files f ON f.id = s.file_id
                  WHERE s.version_id = :vid
-                   AND s.symbol_type = "sdc_component"
+                   AND s.symbol_type = :type
                    AND (s.fqn = :sdc OR json_extract(s.metadata_json, "$.sdc_component") = :sdc)
                  LIMIT 1',
                 [
                     'vid' => $versionId,
+                    'type' => SymbolType::SdcComponent->value,
                     'sdc' => $sdcId,
                 ]
             )->fetch();
@@ -263,7 +265,7 @@ class DatabaseApi
             }
         }
 
-        if ($language === 'php' && $symbolType === 'class') {
+        if ($language === 'php' && $symbolType === SymbolType::ClassSymbol) {
             $serviceRows = $this->database->query(
                 'SELECT s.*, f.file_path
                  FROM symbols s
@@ -273,13 +275,13 @@ class DatabaseApi
                    AND s.symbol_type = :type
                    AND ltrim(COALESCE(json_extract(s.signature_json, \'$.class\'), \'\'), \'\\\') = :fqn
                  ORDER BY s.fqn',
-                [
-                    'vid' => $versionId,
-                    'lang' => 'yaml',
-                    'type' => 'service',
-                    'fqn' => (string) ($symbol['fqn'] ?? ''),
-                ]
-            )->fetchAll();
+                    [
+                        'vid' => $versionId,
+                        'lang' => 'yaml',
+                        'type' => SymbolType::Service->value,
+                        'fqn' => (string) ($symbol['fqn'] ?? ''),
+                    ]
+                )->fetchAll();
 
             foreach ($serviceRows as $serviceRow) {
                 $links[] = [
@@ -303,13 +305,13 @@ class DatabaseApi
                        WHERE json_each.value = :path
                    )
                  ORDER BY s.fqn',
-                [
-                    'vid' => $versionId,
-                    'lang' => 'drupal_libraries',
-                    'type' => 'drupal_library',
-                    'path' => (string) ($symbol['file_path'] ?? ''),
-                ]
-            )->fetchAll();
+                    [
+                        'vid' => $versionId,
+                        'lang' => 'drupal_libraries',
+                        'type' => SymbolType::DrupalLibrary->value,
+                        'path' => (string) ($symbol['file_path'] ?? ''),
+                    ]
+                )->fetchAll();
 
             foreach ($libraryRows as $libraryRow) {
                 $links[] = [
@@ -1019,7 +1021,7 @@ class DatabaseApi
      * - find exported config depending on module "node"
      * - find Drupal libraries referencing asset path "js/block.js"
      *
-     * @param array<int, string> $symbolTypes
+     * @param array<int, SymbolType> $symbolTypes
      * @return array<int, array<string, mixed>>
      */
     #[\NoDiscard]
@@ -1041,7 +1043,7 @@ class DatabaseApi
             JOIN parsed_files f ON f.id = s.file_id
             LEFT JOIN symbols cs ON cs.version_id = s.version_id
                 AND cs.language = 'php'
-                AND cs.symbol_type = 'class'
+                AND cs.symbol_type = :class_type
                 AND cs.fqn = ltrim(COALESCE(json_extract(s.signature_json, '$.class'), ''), '\\')
             LEFT JOIN parsed_files cf ON cf.id = cs.file_id
             WHERE s.version_id = :vid
@@ -1051,6 +1053,7 @@ class DatabaseApi
             'vid' => $versionId,
             'term' => $term,
             'like' => '%' . $term . '%',
+            'class_type' => SymbolType::ClassSymbol->value,
         ];
 
         if ($symbolTypes !== []) {
@@ -1058,7 +1061,7 @@ class DatabaseApi
             foreach (array_values($symbolTypes) as $index => $symbolType) {
                 $key = 'type' . $index;
                 $typeConditions[] = ':' . $key;
-                $params[$key] = $symbolType;
+                $params[$key] = $symbolType->value;
             }
 
             $sql .= ' AND s.symbol_type IN (' . implode(', ', $typeConditions) . ')';
